@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os.log
+
+private let logger = OSLog(subsystem: "com.claudesidebar", category: "ITermScanner")
 
 // MARK: - iTerm2 Scanner (Window-Centric)
 
@@ -8,6 +11,9 @@ class ITermScanner {
     private var branchCache: [String: (String, Date)] = [:]  // cwd path -> (branch, time)
     private var cwdCache: [String: (String, Date)] = [:]     // tty -> (cwd, time)
     private var appleScriptInFlight = false
+
+    private static let maxCacheSize = 500
+    private static let maxBranchWalkDepth = 50
 
     func readHookStates() -> HookStates {
         return stateReader.readStates()
@@ -54,7 +60,23 @@ class ITermScanner {
             }
         }
 
+        trimCaches()
         return windows
+    }
+
+    // Trim caches to prevent unbounded growth
+    private func trimCaches() {
+        if branchCache.count > Self.maxCacheSize {
+            // Remove oldest entries
+            let sorted = branchCache.sorted { $0.value.1 < $1.value.1 }
+            let toRemove = sorted.prefix(branchCache.count - Self.maxCacheSize / 2)
+            for (key, _) in toRemove { branchCache.removeValue(forKey: key) }
+        }
+        if cwdCache.count > Self.maxCacheSize {
+            let sorted = cwdCache.sorted { $0.value.1 < $1.value.1 }
+            let toRemove = sorted.prefix(cwdCache.count - Self.maxCacheSize / 2)
+            for (key, _) in toRemove { cwdCache.removeValue(forKey: key) }
+        }
     }
 
     private func queryITerm(hookStates: HookStates) -> [ITermWindowInfo] {
@@ -85,7 +107,11 @@ class ITermScanner {
         guard let appleScript = NSAppleScript(source: script) else { return [] }
         var error: NSDictionary?
         let result = appleScript.executeAndReturnError(&error)
-        guard error == nil, let output = result.stringValue else { return [] }
+        if let error = error {
+            os_log("AppleScript query error: %{public}@", log: logger, type: .error, error.description)
+            return []
+        }
+        guard let output = result.stringValue else { return [] }
 
         // Parse into window -> tab hierarchy
         var windowMap: [Int: ITermWindowInfo] = [:]  // ordered by first appearance
@@ -208,7 +234,6 @@ class ITermScanner {
         var s = name
 
         // Strip "/dev/ttyXXX" and everything around it (any dash variant)
-        // Find the last occurrence of /dev/ and cut everything from there
         if let devRange = s.range(of: "/dev/", options: .backwards) {
             s = String(s[s.startIndex..<devRange.lowerBound])
         }
@@ -253,14 +278,24 @@ class ITermScanner {
     }
 
     func detectCWD(tty: String) -> String? {
-        // Use lsof to find CWD of foreground process on TTY
+        // Sanitize tty for shell command — only allow /dev/ttyXXX pattern
+        guard tty.hasPrefix("/dev/") && !tty.contains(";") && !tty.contains("$") && !tty.contains("`") else {
+            os_log("Invalid TTY format: %{public}@", log: logger, type: .error, tty)
+            return nil
+        }
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/sh")
         proc.arguments = ["-c", "lsof -a -d cwd +D /dev -F n -t \(tty) 2>/dev/null | head -1 | xargs -I{} lsof -a -d cwd -p {} -F n 2>/dev/null | grep ^n/ | head -1 | cut -c2-"]
         let outPipe = Pipe()
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
-        do { try proc.run() } catch { return nil }
+        do {
+            try proc.run()
+        } catch {
+            os_log("detectCWD failed for tty %{public}@: %{public}@", log: logger, type: .error, tty, error.localizedDescription)
+            return nil
+        }
         let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
         let result = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -281,10 +316,12 @@ class ITermScanner {
     }
 
     private func getBranch(cwd: String) -> String? {
-        // Walk up from CWD to find git repo
+        // Walk up from CWD to find git repo, with depth limit
         var path = cwd
         let fm = FileManager.default
-        while path != "/" {
+        var depth = 0
+        while path != "/" && depth < Self.maxBranchWalkDepth {
+            depth += 1
             if fm.fileExists(atPath: path + "/.git") {
                 let pipe = Pipe()
                 let process = Process()
@@ -292,7 +329,12 @@ class ITermScanner {
                 process.arguments = ["-C", path, "branch", "--show-current"]
                 process.standardOutput = pipe
                 process.standardError = FileHandle.nullDevice
-                try? process.run()
+                do {
+                    try process.run()
+                } catch {
+                    os_log("git branch failed for %{public}@: %{public}@", log: logger, type: .error, path, error.localizedDescription)
+                    return nil
+                }
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
                 return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -302,14 +344,21 @@ class ITermScanner {
         return nil
     }
 
+    // Escape string for use in AppleScript string literals
+    private func escapeForAppleScript(_ s: String) -> String {
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     func focusSession(windowId: Int, sessionId: String) {
+        let escapedSessionId = escapeForAppleScript(sessionId)
         let script = """
         tell application "iTerm2"
             repeat with w in windows
                 if id of w is \(windowId) then
                     repeat with t in tabs of w
                         repeat with s in sessions of t
-                            if unique ID of s is "\(sessionId)" then
+                            if unique ID of s is "\(escapedSessionId)" then
                                 select s
                                 select t
                             end if
@@ -324,6 +373,9 @@ class ITermScanner {
         if let appleScript = NSAppleScript(source: script) {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
+            if let error = error {
+                os_log("focusSession AppleScript error: %{public}@", log: logger, type: .error, error.description)
+            }
         }
     }
 
@@ -341,6 +393,9 @@ class ITermScanner {
         if let appleScript = NSAppleScript(source: script) {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
+            if let error = error {
+                os_log("createTab AppleScript error: %{public}@", log: logger, type: .error, error.description)
+            }
         }
     }
 
@@ -354,6 +409,9 @@ class ITermScanner {
         if let appleScript = NSAppleScript(source: script) {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
+            if let error = error {
+                os_log("createWindow AppleScript error: %{public}@", log: logger, type: .error, error.description)
+            }
         }
     }
 }

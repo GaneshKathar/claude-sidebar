@@ -132,7 +132,7 @@ class TabCard: NSView {
         row1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
-    required init?(coder: NSCoder) { fatalError() }
+    required init?(coder: NSCoder) { nil }
 
     private func makeClaudeStatusRow(tab: ITermTabInfo) -> NSView {
         let row = NSStackView()
@@ -309,8 +309,9 @@ class TabCard: NSView {
 
     override func updateTrackingAreas() {
         if let ta = trackingArea { removeTrackingArea(ta) }
-        trackingArea = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
-        addTrackingArea(trackingArea!)
+        let ta = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        trackingArea = ta
+        addTrackingArea(ta)
     }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }

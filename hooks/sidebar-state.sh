@@ -11,19 +11,24 @@ CWD=$(extract cwd)
 
 [ -z "$SESSION_ID" ] && exit 0
 
-# TTY from parent (Claude) — bash builtin
+# TTY from parent (Claude) — macOS only
 TTY=""
-if [ -r "/proc/$PPID/fd/0" ]; then
-    TTY=$(readlink "/proc/$PPID/fd/0" 2>/dev/null)
-else
-    TTY=$(ps -p $PPID -o tty= 2>/dev/null)
-    TTY="${TTY// /}"
-    [ -n "$TTY" ] && [ "$TTY" != "??" ] && TTY="/dev/$TTY" || TTY=""
-fi
+TTY=$(ps -p $PPID -o tty= 2>/dev/null)
+TTY="${TTY// /}"
+[ -n "$TTY" ] && [ "$TTY" != "??" ] && TTY="/dev/$TTY" || TTY=""
 
 STATE_DIR="/tmp/claude-sidebar"
-[ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
-STATE_FILE="$STATE_DIR/$SESSION_ID.json"
+[ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR" 2>/dev/null
+# Restrict file permissions to owner-only
+umask 0077
+
+# Use SESSION_ID + TTY hash for unique state files (avoid collision)
+if [ -n "$TTY" ]; then
+    SAFE_TTY="${TTY//\//_}"
+    STATE_FILE="$STATE_DIR/${SESSION_ID}-${SAFE_TTY}.json"
+else
+    STATE_FILE="$STATE_DIR/$SESSION_ID.json"
+fi
 
 # Detect repo from CWD — try sdmain-N pattern first (fastest, no config read)
 REPO_NUM=""

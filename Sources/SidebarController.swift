@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os.log
+
+private let logger = OSLog(subsystem: "com.claudesidebar", category: "SidebarController")
 
 // MARK: - Flipped View (content starts from top)
 
@@ -29,6 +32,11 @@ class SidebarController {
     private var lastITermWindowCount = -1
     private var windowWatchTimer: Timer?
 
+    // Observer tokens for proper cleanup
+    private var wsActivateObserver: NSObjectProtocol?
+    private var wsDeactivateObserver: NSObjectProtocol?
+    private var screenChangeObserver: NSObjectProtocol?
+
     // Width state
     private let collapsedWidth: CGFloat = 62
     private let expandedWidth: CGFloat = 300
@@ -42,7 +50,6 @@ class SidebarController {
     private let footerView = FlippedView()
     private let logoView = NSView()
     private let titleLabel = NSTextField(labelWithString: "iTerm Sidebar")
-    // section label removed per user request
 
     init() {
         window = NSPanel(
@@ -97,8 +104,6 @@ class SidebarController {
         setupHeader()
         contentView.addSubview(headerView)
 
-        // (section label removed)
-
         // --- Footer ---
         setupFooter()
         contentView.addSubview(footerView)
@@ -106,6 +111,43 @@ class SidebarController {
         positionWindow()
         layoutSubviews()
         setupHoverTracking()
+        setupScreenChangeObserver()
+    }
+
+    deinit {
+        // Invalidate all timers
+        fastTimer?.invalidate()
+        slowTimer?.invalidate()
+        windowWatchTimer?.invalidate()
+
+        // Remove event monitors
+        if let monitor = localMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+
+        // Remove Darwin notification observer
+        if darwinObserverRegistered {
+            let center = CFNotificationCenterGetDarwinNotifyCenter()
+            CFNotificationCenterRemoveObserver(
+                center,
+                Unmanaged.passUnretained(self).toOpaque(),
+                CFNotificationName("com.claudesidebar.update" as CFString),
+                nil
+            )
+        }
+
+        // Remove NSWorkspace observers
+        let ws = NSWorkspace.shared.notificationCenter
+        if let obs = wsActivateObserver { ws.removeObserver(obs) }
+        if let obs = wsDeactivateObserver { ws.removeObserver(obs) }
+
+        // Remove screen change observer
+        if let obs = screenChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
     }
 
     // MARK: - Layout (frame-based, called on resize)
@@ -243,6 +285,38 @@ class SidebarController {
         window.setFrame(NSRect(x: x, y: y, width: collapsedWidth, height: h), display: true)
     }
 
+    // MARK: - Screen Change Handling
+
+    private func setupScreenChangeObserver() {
+        screenChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleScreenChange()
+        }
+    }
+
+    private func handleScreenChange() {
+        // Ensure window is still on-screen after monitor changes
+        guard let screen = NSScreen.main else { return }
+        let sf = screen.visibleFrame
+        var frame = window.frame
+
+        // If window is off-screen, reposition to default
+        if !sf.intersects(frame) {
+            positionWindow()
+            return
+        }
+
+        // Clamp to screen bounds
+        if frame.maxX > sf.maxX { frame.origin.x = sf.maxX - frame.width }
+        if frame.minX < sf.minX { frame.origin.x = sf.minX }
+        if frame.maxY > sf.maxY { frame.origin.y = sf.maxY - frame.height }
+        if frame.minY < sf.minY { frame.origin.y = sf.minY }
+        window.setFrame(frame, display: true)
+    }
+
     // MARK: - Hover Expand/Collapse
 
     private func setupHoverTracking() {
@@ -295,7 +369,6 @@ class SidebarController {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().setFrame(newFrame, display: true)
             titleLabel.animator().alphaValue = 1
-            // sectionLabel removed
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             self.isAnimating = false
@@ -330,7 +403,6 @@ class SidebarController {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().setFrame(newFrame, display: true)
             titleLabel.animator().alphaValue = 0
-            // sectionLabel removed
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             self.isAnimating = false
@@ -409,12 +481,17 @@ class SidebarController {
         )
 
         let ws = NSWorkspace.shared.notificationCenter
-        ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+
+        // Remove previous observers if any (prevents duplication)
+        if let obs = wsActivateObserver { ws.removeObserver(obs) }
+        if let obs = wsDeactivateObserver { ws.removeObserver(obs) }
+
+        wsActivateObserver = ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleIdentifier == "com.googlecode.iterm2" else { return }
             self?.fullPoll()
         }
-        ws.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+        wsDeactivateObserver = ws.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleIdentifier == "com.googlecode.iterm2" else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.fullPoll() }
@@ -462,6 +539,7 @@ class SidebarController {
             }
 
             DispatchQueue.main.async {
+                // Apply updates to current windows (may have changed since snapshot)
                 for wi in 0..<self.windows.count {
                     for ti in 0..<self.windows[wi].tabs.count {
                         let tty = self.windows[wi].tabs[ti].tty
@@ -505,9 +583,9 @@ class SidebarController {
     private func fullPoll() {
         guard !fullPollInFlight else { return }
         fullPollInFlight = true
+        defer { fullPollInFlight = false }
 
         let newWindows = scanner.scan()
-        fullPollInFlight = false
 
         if !newWindows.isEmpty {
             var merged = newWindows
@@ -558,7 +636,17 @@ class SidebarController {
 
     private func updateUI() {
         let currentIds = Set(windows.map { $0.windowId })
+
+        // Clean up removed windows and unwatch their PIDs
         for (id, btn) in windowButtons where !currentIds.contains(id) {
+            // Unwatch PIDs for all tabs in removed windows
+            if let oldWin = windows.first(where: { $0.windowId == id }) {
+                for tab in oldWin.tabs {
+                    if let proc = tab.processInfo, proc.exitCode == nil {
+                        processMonitor.unwatchPID(Int32(proc.pid))
+                    }
+                }
+            }
             btn.removeFromSuperview()
             windowButtons.removeValue(forKey: id)
         }

@@ -20,7 +20,7 @@ class WindowButton: NSView {
         rebuildUI()
     }
 
-    required init?(coder: NSCoder) { fatalError() }
+    required init?(coder: NSCoder) { nil }
 
     func update(windowInfo: ITermWindowInfo) {
         self.windowInfo = windowInfo
@@ -320,8 +320,9 @@ class WindowButton: NSView {
 
     override func updateTrackingAreas() {
         if let ta = trackingArea { removeTrackingArea(ta) }
-        trackingArea = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
-        addTrackingArea(trackingArea!)
+        let ta = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        trackingArea = ta
+        addTrackingArea(ta)
     }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }

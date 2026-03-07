@@ -1,16 +1,24 @@
 import Foundation
+import os.log
+
+private let logger = OSLog(subsystem: "com.claudesidebar", category: "ProcessMonitor")
 
 // MARK: - Process Monitor (kqueue-based)
 
 class ProcessMonitor {
     private var kq: Int32 = -1
     private var watchedPIDs: [Int32: (tty: String, callback: (Int32) -> Void)] = [:]
+    private let pidLock = NSLock()  // Thread-safe access to watchedPIDs
+    private static let maxWatchedPIDs = 500
     private var monitorThread: Thread?
     private var running = false
 
     init() {
         kq = kqueue()
-        guard kq >= 0 else { return }
+        guard kq >= 0 else {
+            os_log("Failed to create kqueue", log: logger, type: .error)
+            return
+        }
         running = true
         monitorThread = Thread { [weak self] in self?.monitorLoop() }
         monitorThread?.qualityOfService = .utility
@@ -19,11 +27,21 @@ class ProcessMonitor {
 
     deinit {
         running = false
+        monitorThread?.cancel()
         if kq >= 0 { close(kq) }
     }
 
     func watchPID(_ pid: Int32, tty: String, onExit: @escaping (Int32) -> Void) {
         guard kq >= 0 else { return }
+
+        pidLock.lock()
+        // Guard against unbounded growth
+        if watchedPIDs.count >= Self.maxWatchedPIDs {
+            pidLock.unlock()
+            os_log("Max watched PIDs (%d) reached, skipping PID %d", log: logger, type: .info, Self.maxWatchedPIDs, pid)
+            return
+        }
+        pidLock.unlock()
 
         // Register EVFILT_PROC + NOTE_EXIT
         var event = kevent(
@@ -34,8 +52,15 @@ class ProcessMonitor {
             data: 0,
             udata: nil
         )
-        kevent(kq, &event, 1, nil, 0, nil)
+        let result = kevent(kq, &event, 1, nil, 0, nil)
+        if result < 0 {
+            os_log("Failed to register kqueue for PID %d: errno %d", log: logger, type: .error, pid, errno)
+            return
+        }
+
+        pidLock.lock()
         watchedPIDs[pid] = (tty: tty, callback: onExit)
+        pidLock.unlock()
     }
 
     func unwatchPID(_ pid: Int32) {
@@ -49,18 +74,26 @@ class ProcessMonitor {
             udata: nil
         )
         kevent(kq, &event, 1, nil, 0, nil)
+
+        pidLock.lock()
         watchedPIDs.removeValue(forKey: pid)
+        pidLock.unlock()
     }
 
     private func monitorLoop() {
         var event = kevent()
         var timeout = timespec(tv_sec: 1, tv_nsec: 0)
-        while running {
+        while running && !Thread.current.isCancelled {
             let n = kevent(kq, nil, 0, &event, 1, &timeout)
             if n > 0 && event.filter == Int16(EVFILT_PROC) {
                 let pid = Int32(event.ident)
                 let exitStatus = Int32(event.data)
-                if let entry = watchedPIDs.removeValue(forKey: pid) {
+
+                pidLock.lock()
+                let entry = watchedPIDs.removeValue(forKey: pid)
+                pidLock.unlock()
+
+                if let entry = entry {
                     let cb = entry.callback
                     DispatchQueue.main.async { cb(exitStatus) }
                 }
@@ -104,7 +137,12 @@ class ProcessMonitor {
         process.arguments = ["-eo", "pid,tty,etime,stat,args"]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return ScanResult() }
+        do {
+            try process.run()
+        } catch {
+            os_log("ps command failed: %{public}@", log: logger, type: .error, error.localizedDescription)
+            return ScanResult()
+        }
         // Read pipe BEFORE waitUntilExit to avoid deadlock when pipe buffer fills
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
@@ -168,9 +206,6 @@ class ProcessMonitor {
             if let existing = result.processes[fullTTY], existing.startTime > startTime { continue }
 
             // Build display name from args
-            // For "node /path/to/pnpm prebuild-dev" → "pnpm prebuild-dev"
-            // For "python3 /path/to/bazel build ..." → "bazel build ..."
-            // For "make build" → "make build"
             let displayName = buildDisplayName(args: args, baseName: baseName)
 
             result.processes[fullTTY] = ProcessInfo(
@@ -227,7 +262,12 @@ class ProcessMonitor {
         process.arguments = ["-a", "-d", "cwd", "-F", "pn", "-p", pidList]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [:] }
+        do {
+            try process.run()
+        } catch {
+            os_log("lsof command failed: %{public}@", log: logger, type: .error, error.localizedDescription)
+            return [:]
+        }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard let output = String(data: data, encoding: .utf8) else { return [:] }
@@ -267,6 +307,9 @@ class ProcessMonitor {
         } else if timeParts.count == 2 {
             totalSeconds = days * 86400 + timeParts[0] * 60 + timeParts[1]
         }
+
+        // Guard against negative/unreasonable values (clock skew)
+        if totalSeconds < 0 { totalSeconds = 0 }
 
         return Date().addingTimeInterval(-Double(totalSeconds))
     }
