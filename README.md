@@ -1,25 +1,31 @@
 # Claude Sidebar
 
-A macOS floating panel that monitors multiple Claude Code sessions in real time. Sits as a slim sidebar on screen showing which repos have active Claude sessions, their status (working / idle / needs attention), and details like branch, session ID, and TTY.
+A macOS floating panel that monitors iTerm2 windows and Claude Code sessions in real time. Sits as a slim sidebar on the right edge of your screen, auto-expanding on hover to show window details, tab status, git branches, and running processes.
 
 ![macOS](https://img.shields.io/badge/macOS-13%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5.9-orange) ![Architecture](https://img.shields.io/badge/arch-arm64-lightgrey)
 
 ## Features
 
-- **Floating sidebar** — always-on-top panel showing repo status at a glance
-- **Real-time status** via Claude Code hooks (working / idle / alert)
-- **Color-coded indicators** — green (working), blue (idle), orange/red (needs attention)
-- **Sub-panel details** — click a repo to see branch, session ID, CWD, and TTY
-- **iTerm2 integration** — click a session to focus its terminal tab
-- **Menu bar icon** — quick access to toggle sidebar, settings, and hook installer
-- **Configurable** — add/remove repos, adjust poll intervals, stale timeouts, and more
+- **Floating sidebar** — always-on-top panel that auto-expands on hover, collapses when you move away
+- **Window-centric view** — shows all iTerm2 windows with their tabs, not just configured repos
+- **Real-time Claude status** via Claude Code hooks (working / idle / needs attention)
+- **Process monitoring** — detects running commands (make, bazel, etc.) with duration and exit status
+- **Color-coded indicators** — blue (working), green (idle), red (alert/error), yellow (process running)
+- **Git branch display** — shows current branch for each tab
+- **Stable window labels** — window badges (1, 2, A, B...) persist until app restart
+- **iTerm2 integration** — click a tab card to focus its terminal session
+- **Configurable font scale** — adjust UI text size from 80% to 150%
+- **Settings UI** — manage repos, poll intervals, timeouts, and font size
+- **Hook installer** — one-click prompt generation to configure Claude Code hooks
+- **Launch at login** — optional auto-start on login
 - **DMG packaging** — share with teammates via a single `.dmg` file
 
 ## Requirements
 
 - macOS 13.0+ (Apple Silicon / arm64)
 - Xcode Command Line Tools (`xcode-select --install`)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
+- iTerm2
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI (optional, for Claude session tracking)
 
 ## Build
 
@@ -29,7 +35,7 @@ cd claude-sidebar
 bash build.sh
 ```
 
-This compiles `main.swift` into `ClaudeSidebar.app/Contents/MacOS/ClaudeSidebar`.
+This compiles `main.swift` + `Sources/*.swift` into `ClaudeSidebar.app`.
 
 ## Install
 
@@ -53,20 +59,21 @@ This builds and creates `ClaudeSidebar.dmg`. Share it with others — they just 
 
 ### 1. Configure repositories
 
-Open the app → click the menu bar icon → **Settings...**
+Hover over the sidebar → click **Settings** in the footer.
 
 - Add your repo paths (e.g. `~/rubrik/sdmain-1`)
-- Each repo gets a numbered slot in the sidebar
+- Each repo gets a numbered badge in the sidebar
+- Non-repo iTerm windows get letter badges (A, B, C...)
 
 Settings are saved to `config.json` next to the app.
 
 ### 2. Install Claude Code hooks
 
-The sidebar receives status updates via [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks). These must be added to your `~/.claude/settings.json`.
+The sidebar receives Claude status updates via [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks). These must be added to your `~/.claude/settings.json`.
 
 From **Settings** → **Claude Hooks** section:
 
-1. Click **"Install Hooks"**
+1. Click **"Copy Install Prompt"**
 2. Click **"Copy to Clipboard"**
 3. Paste the prompt into any Claude Code session — it will merge the hooks into your settings
 
@@ -82,7 +89,7 @@ This installs hooks for these events:
 
 ### 3. Verify
 
-Start a Claude Code session in one of your configured repos. The sidebar should light up with the repo's status.
+Start a Claude Code session in one of your configured repos. The sidebar should light up with the session's status.
 
 ## Configuration
 
@@ -97,36 +104,51 @@ Start a Claude Code session in one of your configured repos. The sidebar should 
   "pollInterval": 30,
   "branchCacheTTL": 10,
   "staleTimeout": 1800,
-  "launchAtLogin": false
+  "launchAtLogin": false,
+  "fontScale": 1.0
 }
 ```
 
 | Setting | Description | Default |
 |---|---|---|
 | `repos` | List of repos to monitor (num + path) | sdmain 1-4 |
-| `pollInterval` | Seconds between state file polls | 30 |
+| `pollInterval` | Seconds between full iTerm scans | 30 |
 | `branchCacheTTL` | Seconds to cache git branch lookups | 10 |
 | `staleTimeout` | Seconds before a session is considered stale | 1800 (30 min) |
 | `launchAtLogin` | Start app on login | false |
+| `fontScale` | UI text scale factor (0.8 – 1.5) | 1.0 |
 
 ## How it works
 
-1. Claude Code hooks fire a shell script (`hooks/sidebar-state.sh`) on session events
-2. The script writes JSON state files to `/tmp/claude-sidebar/<session_id>.json`
-3. The app polls that directory (every 500ms) and updates the sidebar in real time
-4. Repo detection uses the CWD path — either `sdmain-N` pattern matching or config lookup
+1. **iTerm scanning** — AppleScript queries iTerm2 for all windows, tabs, session names, and TTYs
+2. **Claude hooks** — Claude Code hooks fire `sidebar-state.sh` on session events, writing JSON state files to `/tmp/claude-sidebar/`
+3. **Event-driven updates** — Darwin notifications trigger instant UI updates on hook events; a background timer handles process and branch polling
+4. **Process monitoring** — `ps` scans detect running commands (make, bazel, etc.) attached to terminal TTYs, with `kqueue` watching for exit
+5. **Repo matching** — tabs are matched to configured repos by CWD path; matched windows get numbered badges, others get letter badges
 
 ## Project structure
 
 ```
 claude-sidebar/
-├── main.swift              # Single-file macOS app (AppKit, no storyboards)
-├── build.sh                # Compile script
-├── package.sh              # Build + create DMG
-├── config.json             # Runtime configuration
-├── hooks/
-│   └── sidebar-state.sh    # Claude Code hook script
-└── ClaudeSidebar.app/      # App bundle (pre-built structure)
+├── main.swift                  # Entry point
+├── Sources/
+│   ├── App.swift               # AppDelegate, status bar menu
+│   ├── SidebarController.swift # Main sidebar window, layout, hover expand/collapse
+│   ├── WindowButton.swift      # Per-window UI (collapsed badge + expanded header)
+│   ├── TabCard.swift           # Per-tab card (CWD, branch, Claude/process status)
+│   ├── Models.swift            # AppConfig, data models, state enums
+│   ├── Theme.swift             # Colors, scaled font helpers
+│   ├── ITermScanner.swift      # AppleScript iTerm2 queries, repo matching
+│   ├── StateReader.swift       # Reads hook state files from /tmp
+│   ├── ProcessMonitor.swift    # Process discovery and kqueue exit watching
+│   ├── HookInstaller.swift     # Hook install prompt generator
+│   ├── StatusBarManager.swift  # Menu bar status item
+│   └── SettingsWindowController.swift  # Settings window UI
+├── sidebar-state.sh            # Claude Code hook script
+├── build.sh                    # Compile script
+├── package.sh                  # Build + create DMG
+├── config.json                 # Runtime configuration
+└── ClaudeSidebar.app/          # App bundle
     └── Contents/
         ├── Info.plist
         ├── MacOS/
