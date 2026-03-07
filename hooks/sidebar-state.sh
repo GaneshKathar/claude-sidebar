@@ -50,7 +50,7 @@ if [ -z "$REPO_NUM" ]; then
     fi
 fi
 
-[ -z "$REPO_NUM" ] && exit 0
+[ -z "$REPO_NUM" ] && REPO_NUM=0
 
 # Map event → state
 case "$EVENT" in
