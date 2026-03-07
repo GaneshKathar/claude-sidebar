@@ -1178,7 +1178,9 @@ class SidebarController {
     private var repoButtons: [Int: RepoButton] = [:]
     private var selectedRepo: Int? = nil
     private var pollTimer: Timer?
-    private var fastPollTimer: Timer?
+    private var windowWatchTimer: Timer?
+    private var darwinObserverRegistered = false
+    private var lastITermWindowCount = -1
     private var repos: [Int: RepoInfo] = [:]
     private var mouseMonitor: Any?
 
@@ -1262,7 +1264,8 @@ class SidebarController {
     func start() {
         window.orderFront(nil)
         startPollTimer()
-        startFastPollTimer()
+        startWindowWatcher()
+        startDarwinObserver()
         poll()
     }
 
@@ -1274,11 +1277,61 @@ class SidebarController {
         }
     }
 
-    // Fast poll: re-read hook state JSON files every 500ms
-    private func startFastPollTimer() {
-        fastPollTimer?.invalidate()
-        fastPollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.updateStates()
+    // Lightweight window-count watcher: triggers full poll only when iTerm windows change
+    private func startWindowWatcher() {
+        windowWatchTimer?.invalidate()
+        windowWatchTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkITermWindowCount()
+        }
+    }
+
+    private func checkITermWindowCount() {
+        let count = itermWindowCount()
+        if count != lastITermWindowCount {
+            lastITermWindowCount = count
+            poll()
+        }
+    }
+
+    private func itermWindowCount() -> Int {
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return 0
+        }
+        return windowList.filter { ($0[kCGWindowOwnerName as String] as? String) == "iTerm2" }.count
+    }
+
+    // Darwin notification observer: instant wake-up when hook fires
+    private func startDarwinObserver() {
+        guard !darwinObserverRegistered else { return }
+        darwinObserverRegistered = true
+
+        // Claude hook events — full poll to catch new/closed terminals alongside state changes
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterAddObserver(
+            center,
+            Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer = observer else { return }
+                let sidebar = Unmanaged<SidebarController>.fromOpaque(observer).takeUnretainedValue()
+                DispatchQueue.main.async { sidebar.poll() }
+            },
+            "com.claudesidebar.update" as CFString,
+            nil,
+            .deliverImmediately
+        )
+
+        // iTerm activation/deactivation — catch tab opens/closes when user switches to iTerm
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.googlecode.iterm2" else { return }
+            self?.poll()
+        }
+        ws.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == "com.googlecode.iterm2" else { return }
+            // Slight delay — iTerm needs a moment to finalize tab close
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.poll() }
         }
     }
 
@@ -1298,7 +1351,8 @@ class SidebarController {
         }
 
         startPollTimer()
-        startFastPollTimer()
+        startWindowWatcher()
+        startDarwinObserver()
         poll()
     }
 

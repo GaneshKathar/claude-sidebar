@@ -57,7 +57,7 @@ case "$EVENT" in
     SessionStart|UserPromptSubmit) STATE="working" ;;
     Stop)                          STATE="idle" ;;
     Notification|PermissionRequest) STATE="alert" ;;
-    SessionEnd)                    rm -f "$STATE_FILE"; exit 0 ;;
+    SessionEnd)                    rm -f "$STATE_FILE"; /usr/bin/notifyutil -p com.claudesidebar.update 2>/dev/null; exit 0 ;;
     *)                             exit 0 ;;
 esac
 
@@ -66,3 +66,4 @@ TMP_FILE="/tmp/.claude-sidebar-tmp.$$"
 printf '{"repo":%d,"state":"%s","session_id":"%s","cwd":"%s","tty":"%s","timestamp":%d}' \
     "$REPO_NUM" "$STATE" "$SESSION_ID" "$CWD" "$TTY" "$(date +%s)" > "$TMP_FILE"
 mv -f "$TMP_FILE" "$STATE_FILE"
+/usr/bin/notifyutil -p com.claudesidebar.update 2>/dev/null
