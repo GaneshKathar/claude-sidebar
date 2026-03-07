@@ -36,7 +36,7 @@ class HookInstaller {
     static func generateInstallPrompt() -> String {
         let scriptPath = hookScriptPath()
 
-        var prompt = "Add the following hooks to my ~/.claude/settings.json (merge into existing hooks, preserve all existing settings and hooks, do not remove anything):\n\n"
+        var prompt = "Add or replace the following hooks in my ~/.claude/settings.json (preserve all existing settings, but replace any existing sidebar-state.sh hook entries with these exact entries):\n\n"
         for event in hookEvents {
             prompt += "Event: \(event)\n"
             if event == "Notification" {
@@ -45,7 +45,7 @@ class HookInstaller {
             prompt += "  command: \"\(scriptPath)\"\n"
             prompt += "  async: true, timeout: 5\n\n"
         }
-        prompt += "If any of these hook entries already exist, skip them."
+        prompt += "Remove any sidebar-state.sh hook entries for events not listed above."
         return prompt
     }
 

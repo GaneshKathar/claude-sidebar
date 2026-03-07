@@ -11,6 +11,8 @@ class ITermScanner {
     private var branchCache: [String: (String, Date)] = [:]  // cwd path -> (branch, time)
     private var cwdCache: [String: (String, Date)] = [:]     // tty -> (cwd, time)
     private var appleScriptInFlight = false
+    private var labelCache: [Int: String] = [:]              // windowId -> stable label
+    private var nextLetterIdx = 0
 
     private static let maxCacheSize = 500
     private static let maxBranchWalkDepth = 50
@@ -175,19 +177,26 @@ class ITermScanner {
             }
         }
 
-        // Assign display labels: repo-matched Claude windows get "1","2",... others get "A","B",...
-        var letterIdx = 0
+        // Assign display labels: repo-matched windows get "1","2",...
+        // Others get sticky "A","B",... that persist until the app restarts.
+        // Prune cached labels for windows that no longer exist.
+        let currentIds = Set(windowOrder)
+        labelCache = labelCache.filter { currentIds.contains($0.key) }
+
         let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         for wid in windowOrder {
             guard var win = windowMap[wid] else { continue }
             if let repoNum = matchWindowToRepo(win) {
                 win.displayLabel = "\(repoNum)"
+            } else if let cached = labelCache[wid] {
+                win.displayLabel = cached
             } else {
-                let letter = letterIdx < letters.count
-                    ? String(letters[letters.index(letters.startIndex, offsetBy: letterIdx)])
-                    : "\(letterIdx)"
+                let letter = nextLetterIdx < letters.count
+                    ? String(letters[letters.index(letters.startIndex, offsetBy: nextLetterIdx)])
+                    : "\(nextLetterIdx)"
                 win.displayLabel = letter
-                letterIdx += 1
+                labelCache[wid] = letter
+                nextLetterIdx += 1
             }
             windowMap[wid] = win
         }
@@ -218,7 +227,7 @@ class ITermScanner {
     // Check if any Claude tab in this window has a CWD matching a configured repo
     private func matchWindowToRepo(_ win: ITermWindowInfo) -> Int? {
         for tab in win.tabs {
-            guard tab.hasClaude, let cwd = tab.cwd else { continue }
+            guard let cwd = tab.cwd else { continue }
             for repo in appConfig.repos {
                 let repoPath = repo.expandedPath
                 if cwd == repoPath || cwd.hasPrefix(repoPath + "/") {

@@ -11,6 +11,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     private var staleTimeoutLabel: NSTextField!
     private var branchCacheStepper: NSStepper!
     private var branchCacheLabel: NSTextField!
+    private var fontScaleStepper: NSStepper!
+    private var fontScaleLabel: NSTextField!
     private var launchAtLoginCheckbox: NSButton!
     private var tableView: NSTableView!
     private var hookStatusLabel: NSTextField!
@@ -156,6 +158,27 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         branchCacheLabel.frame = NSRect(x: 350, y: yOffset, width: 30, height: 20)
         branchCacheLabel.alignment = .right
         contentView.addSubview(branchCacheLabel)
+
+        // Font scale
+        yOffset -= 28
+        let fontScaleDescLabel = makeLabel("Font size:")
+        fontScaleDescLabel.frame = NSRect(x: 20, y: yOffset, width: 200, height: 20)
+        contentView.addSubview(fontScaleDescLabel)
+
+        fontScaleStepper = NSStepper()
+        fontScaleStepper.minValue = 0.8
+        fontScaleStepper.maxValue = 1.5
+        fontScaleStepper.increment = 0.1
+        fontScaleStepper.doubleValue = appConfig.fontScale ?? 1.0
+        fontScaleStepper.target = self
+        fontScaleStepper.action = #selector(stepperChanged)
+        fontScaleStepper.frame = NSRect(x: 380, y: yOffset, width: 20, height: 20)
+        contentView.addSubview(fontScaleStepper)
+
+        fontScaleLabel = makeLabel("\(Int(fontScaleStepper.doubleValue * 100))%")
+        fontScaleLabel.frame = NSRect(x: 340, y: yOffset, width: 40, height: 20)
+        fontScaleLabel.alignment = .right
+        contentView.addSubview(fontScaleLabel)
 
         // Launch at login
         yOffset -= 30
@@ -317,6 +340,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             staleTimeoutLabel.stringValue = "\(Int(sender.doubleValue))"
         } else if sender === branchCacheStepper {
             branchCacheLabel.stringValue = "\(Int(sender.doubleValue))"
+        } else if sender === fontScaleStepper {
+            fontScaleLabel.stringValue = "\(Int(sender.doubleValue * 100))%"
         }
     }
 
@@ -347,7 +372,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             pollInterval: pollIntervalStepper.doubleValue,
             branchCacheTTL: branchCacheStepper.doubleValue,
             staleTimeout: staleTimeoutStepper.doubleValue * 60,
-            launchAtLogin: launchAtLoginCheckbox.state == .on
+            launchAtLogin: launchAtLoginCheckbox.state == .on,
+            fontScale: fontScaleStepper.doubleValue
         )
         newConfig.save()
         onSave?(newConfig)

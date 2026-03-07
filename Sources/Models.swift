@@ -21,6 +21,7 @@ struct AppConfig: Codable {
     var branchCacheTTL: Double?
     var staleTimeout: Double?
     var launchAtLogin: Bool?
+    var fontScale: Double? = 1.0
 
     // Resolve install dir from the app bundle's location
     // e.g. /Users/foo/rubrik/claude-sidebar/ClaudeSidebar.app -> /Users/foo/rubrik/claude-sidebar

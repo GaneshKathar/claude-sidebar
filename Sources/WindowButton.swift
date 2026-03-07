@@ -88,7 +88,7 @@ class WindowButton: NSView {
         fused.addSubview(badge)
 
         let numLabel = NSTextField(labelWithString: "\(windowInfo.displayLabel)")
-        numLabel.font = .monospacedSystemFont(ofSize: 15, weight: .bold)
+        numLabel.font = Theme.monoFont(ofSize: 15, weight: .bold)
         numLabel.textColor = badgeTextColor(windowInfo.state)
         numLabel.alignment = .center
         numLabel.isBezeled = false
@@ -113,7 +113,7 @@ class WindowButton: NSView {
         let tabCount = windowInfo.tabs.count
         let countText = tabCount == 1 ? "1 tab" : "\(tabCount) tabs"
         let countLabel = NSTextField(labelWithString: countText)
-        countLabel.font = .systemFont(ofSize: 8)
+        countLabel.font = Theme.font(ofSize: 8)
         countLabel.textColor = Theme.textDim
         countLabel.alignment = .center
         countLabel.isBezeled = false
@@ -180,7 +180,7 @@ class WindowButton: NSView {
         badge.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
         let badgeNum = NSTextField(labelWithString: "\(windowInfo.displayLabel)")
-        badgeNum.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        badgeNum.font = Theme.monoFont(ofSize: 12, weight: .semibold)
         badgeNum.textColor = badgeTextColor(windowInfo.state)
         badgeNum.alignment = .center
         badgeNum.isBezeled = false
@@ -193,7 +193,7 @@ class WindowButton: NSView {
         badgeNum.centerYAnchor.constraint(equalTo: badge.centerYAnchor).isActive = true
 
         let nameLabel = NSTextField(labelWithString: windowInfo.windowName)
-        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nameLabel.font = Theme.font(ofSize: 12, weight: .medium)
         nameLabel.textColor = NSColor(white: 1.0, alpha: 0.8)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.maximumNumberOfLines = 1
@@ -204,40 +204,8 @@ class WindowButton: NSView {
         nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let tabCount = windowInfo.tabs.count
-        let metaText = tabCount == 1 ? "1 tab" : "\(tabCount) tabs"
-        let metaLabel = NSTextField(labelWithString: metaText)
-        metaLabel.font = .systemFont(ofSize: 9)
-        metaLabel.textColor = NSColor(white: 1.0, alpha: 0.3)
-        metaLabel.isBezeled = false
-        metaLabel.drawsBackground = false
-        metaLabel.isEditable = false
-        metaLabel.isSelectable = false
-        metaLabel.setContentHuggingPriority(.required, for: .horizontal)
-
-        let plusBtn = NSTextField(labelWithString: "+")
-        plusBtn.font = .systemFont(ofSize: 13, weight: .medium)
-        plusBtn.textColor = NSColor(white: 1.0, alpha: 0.4)
-        plusBtn.isBezeled = false
-        plusBtn.drawsBackground = false
-        plusBtn.isEditable = false
-        plusBtn.isSelectable = false
-        plusBtn.setContentHuggingPriority(.required, for: .horizontal)
-
-        let chevron = NSTextField(labelWithString: "\u{25B6}")
-        chevron.font = .systemFont(ofSize: 9)
-        chevron.textColor = NSColor(white: 1.0, alpha: 0.2)
-        chevron.isBezeled = false
-        chevron.drawsBackground = false
-        chevron.isEditable = false
-        chevron.isSelectable = false
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-
         header.addArrangedSubview(badge)
         header.addArrangedSubview(nameLabel)
-        header.addArrangedSubview(metaLabel)
-        header.addArrangedSubview(plusBtn)
-        header.addArrangedSubview(chevron)
         header.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true

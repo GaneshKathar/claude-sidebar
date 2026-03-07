@@ -43,7 +43,7 @@ class TabCard: NSView {
         row1.alignment = .centerY
 
         let cwdLabel = NSTextField(labelWithString: "")
-        cwdLabel.font = NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)
+        cwdLabel.font = Theme.monoFont(ofSize: 10)
         cwdLabel.textColor = NSColor(white: 1.0, alpha: 0.45)
         cwdLabel.lineBreakMode = .byTruncatingHead
         cwdLabel.maximumNumberOfLines = 1
@@ -65,7 +65,7 @@ class TabCard: NSView {
         row1.addArrangedSubview(cwdLabel)
 
         let focusBtn = NSTextField(labelWithString: "\u{2318}")
-        focusBtn.font = .systemFont(ofSize: 9)
+        focusBtn.font = Theme.font(ofSize: 9)
         focusBtn.textColor = NSColor(white: 1.0, alpha: 0.15)
         focusBtn.isBezeled = false
         focusBtn.drawsBackground = false
@@ -84,7 +84,7 @@ class TabCard: NSView {
             row2.alignment = .centerY
 
             let branchIcon = NSTextField(labelWithString: "\u{2387}")
-            branchIcon.font = .systemFont(ofSize: 10)
+            branchIcon.font = Theme.font(ofSize: 10)
             branchIcon.textColor = NSColor(white: 1.0, alpha: 0.25)
             branchIcon.isBezeled = false
             branchIcon.drawsBackground = false
@@ -92,7 +92,7 @@ class TabCard: NSView {
             branchIcon.isSelectable = false
 
             let branchName = NSTextField(labelWithString: branch)
-            branchName.font = .systemFont(ofSize: 10)
+            branchName.font = Theme.font(ofSize: 10)
             branchName.textColor = NSColor(white: 1.0, alpha: 0.4)
             branchName.lineBreakMode = .byTruncatingTail
             branchName.maximumNumberOfLines = 1
@@ -156,7 +156,7 @@ class TabCard: NSView {
         }
 
         let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: 10)
+        label.font = Theme.font(ofSize: 10)
         label.isBezeled = false
         label.drawsBackground = false
         label.isEditable = false
@@ -204,13 +204,13 @@ class TabCard: NSView {
             dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
 
             let label = NSTextField(labelWithString: "Running")
-            label.font = .systemFont(ofSize: 10)
+            label.font = Theme.font(ofSize: 10)
             label.textColor = Theme.yellow
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)
+            name.font = Theme.monoFont(ofSize: 10)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.lineBreakMode = .byTruncatingTail
             name.maximumNumberOfLines = 1
@@ -218,7 +218,7 @@ class TabCard: NSView {
             name.isEditable = false; name.isSelectable = false
 
             let duration = NSTextField(labelWithString: proc.durationString)
-            duration.font = .systemFont(ofSize: 9)
+            duration.font = Theme.font(ofSize: 9)
             duration.textColor = NSColor(white: 1.0, alpha: 0.25)
             duration.isBezeled = false; duration.drawsBackground = false
             duration.isEditable = false; duration.isSelectable = false
@@ -239,19 +239,19 @@ class TabCard: NSView {
             dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
 
             let label = NSTextField(labelWithString: "Completed")
-            label.font = .systemFont(ofSize: 10)
+            label.font = Theme.font(ofSize: 10)
             label.textColor = Theme.green
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)
+            name.font = Theme.monoFont(ofSize: 10)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.isBezeled = false; name.drawsBackground = false
             name.isEditable = false; name.isSelectable = false
 
             let duration = NSTextField(labelWithString: proc.durationString)
-            duration.font = .systemFont(ofSize: 9)
+            duration.font = Theme.font(ofSize: 9)
             duration.textColor = NSColor(white: 1.0, alpha: 0.25)
             duration.isBezeled = false; duration.drawsBackground = false
             duration.isEditable = false; duration.isSelectable = false
@@ -273,19 +273,19 @@ class TabCard: NSView {
 
             let exitLabel = "Failed (exit \(proc.exitCode ?? 1))"
             let label = NSTextField(labelWithString: exitLabel)
-            label.font = .systemFont(ofSize: 10)
+            label.font = Theme.font(ofSize: 10)
             label.textColor = Theme.red
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = NSFont(name: "Menlo", size: 10) ?? .monospacedSystemFont(ofSize: 10, weight: .regular)
+            name.font = Theme.monoFont(ofSize: 10)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.isBezeled = false; name.drawsBackground = false
             name.isEditable = false; name.isSelectable = false
 
             let duration = NSTextField(labelWithString: proc.durationString)
-            duration.font = .systemFont(ofSize: 9)
+            duration.font = Theme.font(ofSize: 9)
             duration.textColor = NSColor(white: 1.0, alpha: 0.25)
             duration.isBezeled = false; duration.drawsBackground = false
             duration.isEditable = false; duration.isSelectable = false

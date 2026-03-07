@@ -16,4 +16,16 @@ struct Theme {
     static let purple = NSColor(red: 168/255, green: 85/255, blue: 247/255, alpha: 1.0)
     static let hover = NSColor(white: 1.0, alpha: 0.08)
     static let selected = NSColor(white: 1.0, alpha: 0.12)
+
+    static var fontScale: CGFloat {
+        CGFloat(appConfig.fontScale ?? 1.0)
+    }
+
+    static func font(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        .systemFont(ofSize: size * fontScale, weight: weight)
+    }
+
+    static func monoFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont(name: "Menlo", size: size * fontScale) ?? .monospacedSystemFont(ofSize: size * fontScale, weight: weight)
+    }
 }

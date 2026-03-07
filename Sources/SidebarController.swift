@@ -24,6 +24,7 @@ class SidebarController {
     private var windowButtons: [Int: WindowButton] = [:]
     private var windows: [ITermWindowInfo] = []
     private var expandedWindows: Set<Int> = []
+    private let settingsController = SettingsWindowController()
 
     // Timers
     private var fastTimer: Timer?
@@ -205,7 +206,7 @@ class SidebarController {
         headerView.addSubview(logoView)
 
         let logoText = NSTextField(labelWithString: "iT")
-        logoText.font = .systemFont(ofSize: 13, weight: .semibold)
+        logoText.font = Theme.font(ofSize: 13, weight: .semibold)
         logoText.textColor = .white
         logoText.alignment = .center
         logoText.isBezeled = false
@@ -215,7 +216,7 @@ class SidebarController {
         logoText.frame = NSRect(x: 0, y: 3, width: 28, height: 22)
         logoView.addSubview(logoText)
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = Theme.font(ofSize: 13, weight: .semibold)
         titleLabel.textColor = NSColor(white: 1.0, alpha: 0.8)
         titleLabel.isBezeled = false
         titleLabel.drawsBackground = false
@@ -254,6 +255,8 @@ class SidebarController {
 
         let settingsBtn = makeFooterButton(title: "\u{2699} Settings")
         settingsBtn.frame = NSRect(x: 146, y: 6, width: 130, height: 32)
+        settingsBtn.target = self
+        settingsBtn.action = #selector(settingsTapped)
         footerView.addSubview(settingsBtn)
     }
 
@@ -265,13 +268,21 @@ class SidebarController {
         btn.layer?.borderColor = Theme.border.cgColor
         btn.layer?.borderWidth = 1
         btn.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
-        btn.font = .systemFont(ofSize: 11)
+        btn.font = Theme.font(ofSize: 11)
         btn.contentTintColor = NSColor(white: 1.0, alpha: 0.4)
         return btn
     }
 
     @objc private func newWindowTapped() {
         scanner.createWindow()
+    }
+
+    @objc private func settingsTapped() {
+        settingsController.onSave = { [weak self] newConfig in
+            appConfig = newConfig
+            self?.reload()
+        }
+        settingsController.showWindow()
     }
 
     // MARK: - Position
