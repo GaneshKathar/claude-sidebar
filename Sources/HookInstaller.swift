@@ -6,7 +6,7 @@ import Foundation
 class HookInstaller {
     static let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
 
-    static let hookEvents = ["SessionStart", "UserPromptSubmit", "Stop", "Notification", "PermissionRequest", "SessionEnd"]
+    static let hookEvents = ["SessionStart", "UserPromptSubmit", "Stop", "Notification", "PermissionRequest", "PostToolUse", "SessionEnd"]
 
     static func hookScriptPath() -> String {
         return AppConfig.installDir + "/hooks/sidebar-state.sh"
@@ -40,7 +40,7 @@ class HookInstaller {
         for event in hookEvents {
             prompt += "Event: \(event)\n"
             if event == "Notification" {
-                prompt += "  matcher: \"permission_prompt|elicitation_dialog|idle_prompt\"\n"
+                prompt += "  matcher: \"permission_prompt|elicitation_dialog\"\n"
             }
             prompt += "  command: \"\(scriptPath)\"\n"
             prompt += "  async: true, timeout: 5\n\n"

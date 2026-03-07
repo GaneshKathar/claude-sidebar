@@ -62,6 +62,17 @@ case "$EVENT" in
     SessionStart|UserPromptSubmit) STATE="working" ;;
     Stop)                          STATE="idle" ;;
     Notification|PermissionRequest) STATE="alert" ;;
+    PostToolUse)
+        # Only transition alert→working; skip write if already working/idle
+        if [ -f "$STATE_FILE" ]; then
+            case "$(cat "$STATE_FILE")" in
+                *'"state":"alert"'*) STATE="working" ;;
+                *) exit 0 ;;
+            esac
+        else
+            exit 0
+        fi
+        ;;
     SessionEnd)                    rm -f "$STATE_FILE"; /usr/bin/notifyutil -p com.claudesidebar.update 2>/dev/null; exit 0 ;;
     *)                             exit 0 ;;
 esac
