@@ -13,6 +13,8 @@ class FlippedView: NSView {
 // MARK: - Sidebar Controller (Window-Centric)
 
 class SidebarController {
+    private enum DockSide { case left, right }
+
     private let window: NSPanel
     private let contentView: FlippedView
     private let scrollView: NSScrollView
@@ -37,6 +39,11 @@ class SidebarController {
     private var wsActivateObserver: NSObjectProtocol?
     private var wsDeactivateObserver: NSObjectProtocol?
     private var screenChangeObserver: NSObjectProtocol?
+    private var windowMoveObserver: NSObjectProtocol?
+
+    // Dock side
+    private var dockSide: DockSide = .right
+    private var snapWorkItem: DispatchWorkItem?
 
     // Width state
     private let collapsedWidth: CGFloat = 62
@@ -113,6 +120,7 @@ class SidebarController {
         layoutSubviews()
         setupHoverTracking()
         setupScreenChangeObserver()
+        setupWindowMoveObserver()
     }
 
     deinit {
@@ -147,6 +155,11 @@ class SidebarController {
 
         // Remove screen change observer
         if let obs = screenChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+
+        // Remove window move observer
+        if let obs = windowMoveObserver {
             NotificationCenter.default.removeObserver(obs)
         }
     }
@@ -287,13 +300,40 @@ class SidebarController {
 
     // MARK: - Position
 
+    private func collapsedContentHeight() -> CGFloat {
+        let headerH: CGFloat = 44
+        let padding: CGFloat = 12
+        windowStack.layoutSubtreeIfNeeded()
+        let stackH = windowStack.fittingSize.height
+        let minHeight: CGFloat = 80
+        return max(headerH + stackH + padding, minHeight)
+    }
+
+    private func resizeCollapsedToFitContent() {
+        guard let screen = NSScreen.main else { return }
+        let sf = screen.visibleFrame
+        let targetH = collapsedContentHeight()
+        let frame = window.frame
+        // Only resize if height changed meaningfully
+        guard abs(frame.height - targetH) > 2 else { return }
+        let newY = sf.midY - targetH / 2
+        let newFrame = NSRect(x: frame.origin.x, y: newY, width: frame.width, height: targetH)
+        window.setFrame(newFrame, display: true)
+        layoutSubviews()
+    }
+
     private func positionWindow() {
         guard let screen = NSScreen.main else { return }
         let sf = screen.visibleFrame
-        let h = sf.height * 0.7
-        let x = sf.maxX - collapsedWidth
+        let currentWidth = isSidebarExpanded ? expandedWidth : collapsedWidth
+        let h = isSidebarExpanded ? sf.height * 0.7 : collapsedContentHeight()
+        let x: CGFloat
+        switch dockSide {
+        case .right: x = sf.maxX - currentWidth
+        case .left:  x = sf.minX
+        }
         let y = sf.midY - h / 2
-        window.setFrame(NSRect(x: x, y: y, width: collapsedWidth, height: h), display: true)
+        window.setFrame(NSRect(x: x, y: y, width: currentWidth, height: h), display: true)
     }
 
     // MARK: - Screen Change Handling
@@ -320,12 +360,71 @@ class SidebarController {
             return
         }
 
-        // Clamp to screen bounds
-        if frame.maxX > sf.maxX { frame.origin.x = sf.maxX - frame.width }
-        if frame.minX < sf.minX { frame.origin.x = sf.minX }
+        // Snap to the correct dock edge
+        switch dockSide {
+        case .right: frame.origin.x = sf.maxX - frame.width
+        case .left:  frame.origin.x = sf.minX
+        }
         if frame.maxY > sf.maxY { frame.origin.y = sf.maxY - frame.height }
         if frame.minY < sf.minY { frame.origin.y = sf.minY }
         window.setFrame(frame, display: true)
+    }
+
+    // MARK: - Drag-to-Snap
+
+    private func setupWindowMoveObserver() {
+        windowMoveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleWindowMoved()
+        }
+    }
+
+    private func handleWindowMoved() {
+        guard !isAnimating else { return }
+        // Debounce: schedule snap check after a brief delay (user may still be dragging)
+        snapWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.snapAfterDrag()
+        }
+        snapWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private func snapAfterDrag() {
+        guard !isAnimating else { return }
+        guard let screen = NSScreen.main else { return }
+        let sf = screen.visibleFrame
+        let frame = window.frame
+        let centerX = frame.midX
+        let screenMidX = sf.midX
+
+        // Determine new dock side based on which half the center is in
+        if centerX < screenMidX {
+            dockSide = .left
+        } else {
+            dockSide = .right
+        }
+
+        // Animate to docked edge
+        let targetX: CGFloat
+        switch dockSide {
+        case .right: targetX = sf.maxX - frame.width
+        case .left:  targetX = sf.minX
+        }
+
+        let snappedFrame = NSRect(x: targetX, y: frame.origin.y, width: frame.width, height: frame.height)
+
+        isAnimating = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(snappedFrame, display: true)
+        }, completionHandler: { [weak self] in
+            self?.isAnimating = false
+        })
     }
 
     // MARK: - Hover Expand/Collapse
@@ -362,13 +461,18 @@ class SidebarController {
         isAnimating = true
 
         let frame = window.frame
-        let rightEdge = frame.maxX
-        let newFrame = NSRect(
-            x: rightEdge - expandedWidth,
-            y: frame.origin.y,
-            width: expandedWidth,
-            height: frame.height
-        )
+        guard let screen = NSScreen.main else { isAnimating = false; return }
+        let sf = screen.visibleFrame
+        let expandedHeight = sf.height * 0.7
+
+        let newX: CGFloat
+        switch dockSide {
+        case .right: newX = frame.maxX - expandedWidth
+        case .left:  newX = frame.origin.x
+        }
+        // Re-center vertically when expanding height
+        let newY = sf.midY - expandedHeight / 2
+        let newFrame = NSRect(x: newX, y: newY, width: expandedWidth, height: expandedHeight)
 
         // Switch buttons to expanded BEFORE animation so layout is ready
         for (_, btn) in windowButtons {
@@ -393,21 +497,26 @@ class SidebarController {
         isSidebarExpanded = false
         isAnimating = true
 
-        let frame = window.frame
-        let rightEdge = frame.maxX
-        let newFrame = NSRect(
-            x: rightEdge - collapsedWidth,
-            y: frame.origin.y,
-            width: collapsedWidth,
-            height: frame.height
-        )
-
         footerView.isHidden = true
 
-        // Switch buttons to collapsed BEFORE animation
+        // Switch buttons to collapsed BEFORE measuring so fittingSize is correct
         for (_, btn) in windowButtons {
             btn.isExpanded = false
         }
+        windowStack.layoutSubtreeIfNeeded()
+
+        let frame = window.frame
+        let collapsedHeight = collapsedContentHeight()
+
+        let newX: CGFloat
+        switch dockSide {
+        case .right: newX = frame.maxX - collapsedWidth
+        case .left:  newX = frame.origin.x
+        }
+        guard let screen = NSScreen.main else { isAnimating = false; return }
+        let sf = screen.visibleFrame
+        let newY = sf.midY - collapsedHeight / 2
+        let newFrame = NSRect(x: newX, y: newY, width: collapsedWidth, height: collapsedHeight)
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
@@ -687,7 +796,12 @@ class SidebarController {
 
         // Update document view height to fit content
         DispatchQueue.main.async { [weak self] in
-            self?.layoutSubviews()
+            guard let self = self else { return }
+            self.layoutSubviews()
+            // When collapsed, resize window height to fit content
+            if !self.isSidebarExpanded && !self.isAnimating {
+                self.resizeCollapsedToFitContent()
+            }
         }
     }
 
