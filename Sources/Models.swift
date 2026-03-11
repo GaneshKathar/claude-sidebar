@@ -6,6 +6,11 @@ import Foundation
 struct RepoConfig: Codable {
     let num: Int
     let path: String
+    var label: String?           // single char or single emoji
+
+    var displayLabel: String {   // falls back to "\(num)"
+        label ?? "\(num)"
+    }
 
     var expandedPath: String {
         if path.hasPrefix("~/") {
@@ -22,6 +27,8 @@ struct AppConfig: Codable {
     var staleTimeout: Double?
     var launchAtLogin: Bool?
     var fontScale: Double? = 1.0
+    var minimalView: Bool? = false
+    var autoStartClaude: Bool? = false
 
     // Resolve install dir from the app bundle's location
     // e.g. /Users/foo/rubrik/claude-sidebar/ClaudeSidebar.app -> /Users/foo/rubrik/claude-sidebar
@@ -30,6 +37,10 @@ struct AppConfig: Codable {
         return (bundlePath as NSString).deletingLastPathComponent
     }()
     static var configPath: String { installDir + "/config.json" }
+
+    static func configFileExists() -> Bool {
+        FileManager.default.fileExists(atPath: configPath)
+    }
 
     static func load() -> AppConfig {
         let paths = [configPath]
@@ -57,6 +68,57 @@ struct AppConfig: Codable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(self) {
             fm.createFile(atPath: AppConfig.configPath, contents: data)
+        }
+    }
+
+    // BFS from home directory, max depth 5, find sdmain* dirs with .git
+    static func detectRepos() -> [RepoConfig] {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        let skipDirs: Set<String> = [
+            "Library", "Applications", "node_modules", ".cache", ".Trash",
+            "Pictures", "Music", "Movies"
+        ]
+
+        var found: [String] = []
+
+        // BFS: (path, depth)
+        var queue: [(String, Int)] = [(home, 0)]
+        var head = 0
+
+        while head < queue.count {
+            let (dir, depth) = queue[head]
+            head += 1
+            guard depth < 5 else { continue }
+
+            guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for entry in entries {
+                // Skip hidden dirs and known-uninteresting dirs
+                if entry.hasPrefix(".") { continue }
+                if depth == 0 && skipDirs.contains(entry) { continue }
+
+                let fullPath = dir + "/" + entry
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: fullPath, isDirectory: &isDir), isDir.boolValue else { continue }
+
+                if entry.hasPrefix("sdmain") {
+                    // Check for .git inside
+                    if fm.fileExists(atPath: fullPath + "/.git") {
+                        found.append(fullPath)
+                    }
+                    // Don't descend into matched sdmain dirs
+                    continue
+                }
+
+                queue.append((fullPath, depth + 1))
+            }
+        }
+
+        // Sort lexicographically, assign serial numbers
+        found.sort()
+        return found.enumerated().map { idx, path in
+            let displayPath = path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+            return RepoConfig(num: idx + 1, path: displayPath)
         }
     }
 }
@@ -191,8 +253,10 @@ struct ITermTabInfo {
 struct ITermWindowInfo {
     var windowId: Int
     var windowName: String
-    var displayLabel: String  // "1","2" for repo windows, "A","B" for others
+    var displayLabel: String  // "1","2" for repo windows, "5","6" for others
     var tabs: [ITermTabInfo]
+    var matchedRepoNum: Int?     // set during scan, nil for non-repo windows
+    var isPlaceholder: Bool = false  // true for repos with no active window
 
     // Highest state across tabs
     var state: SessionState {
@@ -207,5 +271,17 @@ struct ITermWindowInfo {
     // Tabs with activity (for collapsed bar segments)
     var activeTabs: [ITermTabInfo] {
         tabs.filter { $0.hasActivity }
+    }
+
+    // Create a placeholder for a configured repo with no active iTerm window
+    static func placeholder(for repo: RepoConfig) -> ITermWindowInfo {
+        ITermWindowInfo(
+            windowId: -repo.num,   // negative to avoid collision with real windows
+            windowName: repo.expandedPath,
+            displayLabel: repo.displayLabel,
+            tabs: [],
+            matchedRepoNum: repo.num,
+            isPlaceholder: true
+        )
     }
 }

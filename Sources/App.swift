@@ -44,11 +44,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup settings save callback
         settingsController.onSave = { [weak self] newConfig in
             appConfig = newConfig
-            self?.sidebar?.reload()
+            if self?.sidebar == nil {
+                // First-time: create and start sidebar after save
+                self?.sidebar = SidebarController()
+                self?.sidebar?.start()
+            } else {
+                self?.sidebar?.reload()
+            }
         }
 
-        sidebar = SidebarController()
-        sidebar?.start()
+        let isFirstLaunch = !AppConfig.configFileExists()
+
+        if isFirstLaunch {
+            // Auto-detect repos and show first-time settings
+            appConfig.repos = AppConfig.detectRepos()
+            settingsController.showWindow(firstTime: true)
+            // Sidebar will be created in onSave callback
+        } else {
+            sidebar = SidebarController()
+            sidebar?.start()
+        }
 
         os_log("App launched successfully", log: logger, type: .info)
     }

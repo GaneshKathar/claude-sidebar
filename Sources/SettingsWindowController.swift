@@ -2,9 +2,9 @@ import AppKit
 
 // MARK: - Settings Window Controller
 
-class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSource {
+class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate {
     private var window: NSWindow?
-    private var repoList: [(num: Int, path: String)] = []
+    private var repoList: [(num: Int, path: String, label: String?)] = []
     private var pollIntervalStepper: NSStepper!
     private var pollIntervalLabel: NSTextField!
     private var staleTimeoutStepper: NSStepper!
@@ -14,37 +14,58 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     private var fontScaleStepper: NSStepper!
     private var fontScaleLabel: NSTextField!
     private var launchAtLoginCheckbox: NSButton!
+    private var minimalViewCheckbox: NSButton!
+    private var autoStartClaudeCheckbox: NSButton!
     private var tableView: NSTableView!
     private var hookStatusLabel: NSTextField!
     private var installHooksButton: NSButton!
+    private var isFirstTime = false
 
     var onSave: ((AppConfig) -> Void)?
 
-    func showWindow() {
+    func showWindow(firstTime: Bool = false) {
         if let existing = window, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
+        isFirstTime = firstTime
+
         // Load current config into editable list
-        repoList = appConfig.repos.map { (num: $0.num, path: $0.path) }
+        repoList = appConfig.repos.map { (num: $0.num, path: $0.path, label: $0.label) }
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        win.title = "Claude Sidebar Settings"
+        win.title = firstTime ? "Welcome to Claude Sidebar" : "Claude Sidebar Settings"
         win.center()
         win.isReleasedWhenClosed = false
+
+        if firstTime {
+            win.delegate = self
+        }
 
         let contentView = NSView(frame: win.contentView!.bounds)
         contentView.autoresizingMask = [.width, .height]
         win.contentView = contentView
 
-        var yOffset: CGFloat = 520
+        var yOffset: CGFloat = 600
+
+        // === First-time banner ===
+        if firstTime {
+            yOffset -= 30
+            let bannerText = repoList.isEmpty
+                ? "No repositories detected. Add repositories manually below."
+                : "We detected \(repoList.count) repositor\(repoList.count == 1 ? "y" : "ies"). Review and save to start."
+            let banner = makeLabel(bannerText)
+            banner.textColor = .secondaryLabelColor
+            banner.frame = NSRect(x: 20, y: yOffset, width: 440, height: 20)
+            contentView.addSubview(banner)
+        }
 
         // === Section A: Repositories ===
         yOffset -= 30
@@ -69,9 +90,15 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         numCol.isEditable = false
         tableView.addTableColumn(numCol)
 
+        let labelCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("label"))
+        labelCol.title = "Label"
+        labelCol.width = 50
+        labelCol.isEditable = false
+        tableView.addTableColumn(labelCol)
+
         let pathCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
         pathCol.title = "Path"
-        pathCol.width = 340
+        pathCol.width = 290
         pathCol.isEditable = false
         tableView.addTableColumn(pathCol)
 
@@ -89,6 +116,11 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         addButton.bezelStyle = .rounded
         addButton.frame = NSRect(x: 20, y: yOffset, width: 150, height: 24)
         contentView.addSubview(addButton)
+
+        let detectButton = NSButton(title: "Auto-Detect", target: self, action: #selector(autoDetectRepos))
+        detectButton.bezelStyle = .rounded
+        detectButton.frame = NSRect(x: 180, y: yOffset, width: 120, height: 24)
+        contentView.addSubview(detectButton)
 
         // === Section B: Settings ===
         yOffset -= 40
@@ -187,6 +219,20 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         launchAtLoginCheckbox.frame = NSRect(x: 20, y: yOffset, width: 200, height: 20)
         contentView.addSubview(launchAtLoginCheckbox)
 
+        // Minimal view
+        yOffset -= 24
+        minimalViewCheckbox = NSButton(checkboxWithTitle: "Minimal view (badges only, no expand)", target: nil, action: nil)
+        minimalViewCheckbox.state = (appConfig.minimalView ?? false) ? .on : .off
+        minimalViewCheckbox.frame = NSRect(x: 20, y: yOffset, width: 300, height: 20)
+        contentView.addSubview(minimalViewCheckbox)
+
+        // Auto-start Claude
+        yOffset -= 24
+        autoStartClaudeCheckbox = NSButton(checkboxWithTitle: "Auto-start Claude in new windows", target: nil, action: nil)
+        autoStartClaudeCheckbox.state = (appConfig.autoStartClaude ?? false) ? .on : .off
+        autoStartClaudeCheckbox.frame = NSRect(x: 20, y: yOffset, width: 300, height: 20)
+        contentView.addSubview(autoStartClaudeCheckbox)
+
         // === Section C: Claude Hooks ===
         yOffset -= 40
         let hookHeader = makeLabel("Claude Hooks", bold: true)
@@ -212,7 +258,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         saveButton.frame = NSRect(x: 380, y: 12, width: 80, height: 28)
         contentView.addSubview(saveButton)
 
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelSettings))
+        let cancelTitle = firstTime ? "Quit" : "Cancel"
+        let cancelButton = NSButton(title: cancelTitle, target: self, action: #selector(cancelSettings))
         cancelButton.bezelStyle = .rounded
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.frame = NSRect(x: 290, y: 12, width: 80, height: 28)
@@ -259,6 +306,17 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             cell.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             cell.alignment = .center
             return cell
+        } else if id == "label" {
+            let cell = NSTextField(string: repo.label ?? "")
+            cell.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            cell.alignment = .center
+            cell.placeholderString = "\(repo.num)"
+            cell.isBezeled = true
+            cell.bezelStyle = .roundedBezel
+            cell.isEditable = true
+            cell.delegate = self
+            cell.tag = row
+            return cell
         } else if id == "path" {
             let cell = NSTextField(labelWithString: repo.path)
             cell.font = .systemFont(ofSize: 12)
@@ -273,6 +331,22 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             return btn
         }
         return nil
+    }
+
+    // MARK: - NSTextFieldDelegate (label editing)
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let textField = obj.object as? NSTextField else { return }
+        let row = textField.tag
+        guard row < repoList.count else { return }
+
+        var text = textField.stringValue
+        // Enforce single character: keep only first Unicode scalar
+        if text.count > 1 {
+            text = String(text.prefix(1))
+            textField.stringValue = text
+        }
+        repoList[row].label = text.isEmpty ? nil : text
     }
 
     // MARK: - Actions
@@ -314,15 +388,51 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         let home = NSHomeDirectory()
         let displayPath = path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
 
-        repoList.append((num: nextNum, path: displayPath))
+        repoList.append((num: nextNum, path: displayPath, label: nil))
         repoList.sort { $0.num < $1.num }
         tableView.reloadData()
+    }
+
+    @objc private func autoDetectRepos() {
+        let detected = AppConfig.detectRepos()
+        if detected.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "No Repositories Found"
+            alert.informativeText = "Could not find any sdmain* directories with .git under your home directory (up to 5 levels deep)."
+            alert.runModal()
+            return
+        }
+
+        // Merge with existing: skip duplicate paths
+        let existingPaths = Set(repoList.map { $0.path })
+        var added = 0
+        for repo in detected {
+            if !existingPaths.contains(repo.path) {
+                repoList.append((num: 0, path: repo.path, label: repo.label))
+                added += 1
+            }
+        }
+
+        // Re-number sequentially
+        repoList.sort { $0.path < $1.path }
+        for i in 0..<repoList.count {
+            repoList[i].num = i + 1
+        }
+
+        tableView.reloadData()
+
+        if added == 0 {
+            let alert = NSAlert()
+            alert.messageText = "No New Repositories"
+            alert.informativeText = "All detected repositories are already in the list."
+            alert.runModal()
+        }
     }
 
     @objc private func removeRepo(_ sender: NSButton) {
         let row = sender.tag
         guard row < repoList.count else { return }
-        if repoList.count <= 1 {
+        if repoList.count <= 1 && !isFirstTime {
             let alert = NSAlert()
             alert.messageText = "Cannot Remove"
             alert.informativeText = "At least one repository is required."
@@ -330,6 +440,10 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             return
         }
         repoList.remove(at: row)
+        // Re-number sequentially
+        for i in 0..<repoList.count {
+            repoList[i].num = i + 1
+        }
         tableView.reloadData()
     }
 
@@ -368,19 +482,36 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
 
     @objc private func saveSettings() {
         let newConfig = AppConfig(
-            repos: repoList.map { RepoConfig(num: $0.num, path: $0.path) },
+            repos: repoList.map { RepoConfig(num: $0.num, path: $0.path, label: $0.label) },
             pollInterval: pollIntervalStepper.doubleValue,
             branchCacheTTL: branchCacheStepper.doubleValue,
             staleTimeout: staleTimeoutStepper.doubleValue * 60,
             launchAtLogin: launchAtLoginCheckbox.state == .on,
-            fontScale: fontScaleStepper.doubleValue
+            fontScale: fontScaleStepper.doubleValue,
+            minimalView: minimalViewCheckbox.state == .on,
+            autoStartClaude: autoStartClaudeCheckbox.state == .on
         )
         newConfig.save()
+        isFirstTime = false
         onSave?(newConfig)
         window?.close()
     }
 
     @objc private func cancelSettings() {
-        window?.close()
+        if isFirstTime {
+            NSApp.terminate(nil)
+        } else {
+            window?.close()
+        }
+    }
+}
+
+// MARK: - NSWindowDelegate (first-time mode: closing = quit)
+
+extension SettingsWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        if isFirstTime {
+            NSApp.terminate(nil)
+        }
     }
 }

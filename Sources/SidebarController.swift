@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import os.log
 
@@ -40,6 +41,9 @@ class SidebarController {
     private var wsDeactivateObserver: NSObjectProtocol?
     private var screenChangeObserver: NSObjectProtocol?
     private var windowMoveObserver: NSObjectProtocol?
+
+    // Keyboard shortcuts (Carbon hotkeys — no Accessibility permission needed)
+    private var hotkeyRefs: [EventHotKeyRef?] = []
 
     // Dock side
     private var dockSide: DockSide = .right
@@ -119,6 +123,7 @@ class SidebarController {
         positionWindow()
         layoutSubviews()
         setupHoverTracking()
+        setupKeyboardShortcuts()
         setupScreenChangeObserver()
         setupWindowMoveObserver()
     }
@@ -135,6 +140,9 @@ class SidebarController {
         }
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        for ref in hotkeyRefs {
+            if let ref = ref { UnregisterEventHotKey(ref) }
         }
 
         // Remove Darwin notification observer
@@ -441,6 +449,9 @@ class SidebarController {
 
     private func checkMousePosition() {
         guard !isAnimating else { return }
+        // Minimal mode: never expand on hover
+        if appConfig.minimalView == true { return }
+
         let mouse = NSEvent.mouseLocation
         let frame = window.frame
 
@@ -530,6 +541,97 @@ class SidebarController {
         })
     }
 
+    // MARK: - Keyboard Shortcuts (Option+Shift+Number via CGEvent tap)
+
+    private func setupKeyboardShortcuts() {
+        // Install Carbon event handler for hotkey events
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { (_, event, refcon) -> OSStatus in
+                guard let refcon = refcon else { return OSStatus(eventNotHandledErr) }
+                let sidebar = Unmanaged<SidebarController>.fromOpaque(refcon).takeUnretainedValue()
+
+                var hotkeyID = EventHotKeyID()
+                GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                  EventParamType(typeEventHotKeyID), nil,
+                                  MemoryLayout<EventHotKeyID>.size, nil, &hotkeyID)
+
+                let repoNum = Int(hotkeyID.id)
+                DispatchQueue.main.async {
+                    if repoNum == 100 {
+                        sidebar.toggleSidebarViaHotkey()
+                    } else {
+                        sidebar.focusHighPriorityTab(forRepoNum: repoNum)
+                    }
+                }
+                return noErr
+            },
+            1, &eventType, refcon, nil
+        )
+
+        // Carbon key codes for 1-9 (top row)
+        let keyCodes: [UInt32] = [18, 19, 20, 21, 23, 22, 26, 28, 25]  // 1,2,3,4,5,6,7,8,9
+        let modifiers: UInt32 = UInt32(optionKey | shiftKey)  // Option+Shift
+
+        for (index, keyCode) in keyCodes.enumerated() {
+            let repoNum = index + 1
+            var hotkeyID = EventHotKeyID(signature: OSType(0x434C5349), id: UInt32(repoNum))  // "CLSI"
+            var hotkeyRef: EventHotKeyRef?
+            let status = RegisterEventHotKey(keyCode, modifiers, hotkeyID,
+                                             GetApplicationEventTarget(), 0, &hotkeyRef)
+            if status == noErr {
+                hotkeyRefs.append(hotkeyRef)
+            } else {
+                hotkeyRefs.append(nil)
+            }
+        }
+
+        // Register Opt+Shift+0 as sidebar toggle (key code 29 = "0", ID 100)
+        var toggleHotkeyID = EventHotKeyID(signature: OSType(0x434C5349), id: UInt32(100))
+        var toggleHotkeyRef: EventHotKeyRef?
+        let toggleStatus = RegisterEventHotKey(29, modifiers, toggleHotkeyID,
+                                               GetApplicationEventTarget(), 0, &toggleHotkeyRef)
+        if toggleStatus == noErr {
+            hotkeyRefs.append(toggleHotkeyRef)
+        } else {
+            hotkeyRefs.append(nil)
+        }
+
+        let registered = hotkeyRefs.compactMap({ $0 }).count
+        try? "Registered \(registered)/10 hotkeys\n".write(toFile: "/tmp/claude-sidebar-hotkey.log", atomically: true, encoding: .utf8)
+    }
+
+    private func toggleSidebarViaHotkey() {
+        if window.isVisible {
+            window.orderOut(nil)
+        } else {
+            window.orderFront(nil)
+        }
+    }
+
+    private func focusHighPriorityTab(forRepoNum repoNum: Int) {
+        // Hotkey N maps to slot N-1 (1-indexed: repos first, then non-repo windows)
+        let slots = buildSlots()
+        let slotIndex = repoNum - 1
+        guard slotIndex >= 0, slotIndex < slots.count else {
+            os_log("Hotkey: no slot for position %d", log: logger, type: .info, repoNum)
+            return
+        }
+        let win = slots[slotIndex]
+
+        // Placeholder — hotkeys are for navigation only, not opening new windows
+        if win.isPlaceholder { return }
+
+        // Focus the highest-priority tab (same logic as minimal mode click)
+        let tab = win.tabs.max(by: { $0.state < $1.state }) ?? win.tabs.first
+        if let tab = tab {
+            scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
+        }
+    }
+
     // MARK: - Start / Reload
 
     func start() {
@@ -546,6 +648,9 @@ class SidebarController {
         expandedWindows.removeAll()
         startTimers()
         startDarwinObserver()
+        if appConfig.minimalView == true && isSidebarExpanded {
+            collapseSidebar()
+        }
         fullPoll()
     }
 
@@ -763,14 +868,39 @@ class SidebarController {
         updateUI()
     }
 
+    // MARK: - Slot Building (always show all configured repos)
+
+    private func buildSlots() -> [ITermWindowInfo] {
+        var slots: [ITermWindowInfo] = []
+
+        // Repo slots first — one per configured repo, in config order
+        for repo in appConfig.repos {
+            if let win = windows.first(where: { $0.matchedRepoNum == repo.num }) {
+                slots.append(win)
+            } else {
+                slots.append(ITermWindowInfo.placeholder(for: repo))
+            }
+        }
+
+        // Non-repo windows after repos, sorted numerically by label for stable position
+        let claimedIds = Set(slots.map { $0.windowId })
+        let nonRepoWindows = windows.filter { !claimedIds.contains($0.windowId) }
+            .sorted { (Int($0.displayLabel) ?? 0) < (Int($1.displayLabel) ?? 0) }
+        for win in nonRepoWindows {
+            slots.append(win)
+        }
+        return slots
+    }
+
     // MARK: - UI Update
 
     private func updateUI() {
-        let currentIds = Set(windows.map { $0.windowId })
+        let slots = buildSlots()
+        let slotIds = Set(slots.map { $0.windowId })
+        let isMinimal = appConfig.minimalView == true
 
         // Clean up removed windows and unwatch their PIDs
-        for (id, btn) in windowButtons where !currentIds.contains(id) {
-            // Unwatch PIDs for all tabs in removed windows
+        for (id, btn) in windowButtons where !slotIds.contains(id) {
             if let oldWin = windows.first(where: { $0.windowId == id }) {
                 for tab in oldWin.tabs {
                     if let proc = tab.processInfo, proc.exitCode == nil {
@@ -782,13 +912,15 @@ class SidebarController {
             windowButtons.removeValue(forKey: id)
         }
 
-        for win in windows {
+        for win in slots {
             if let btn = windowButtons[win.windowId] {
+                btn.isMinimalMode = isMinimal
                 btn.update(windowInfo: win)
-                btn.isExpanded = isSidebarExpanded
+                btn.isExpanded = isMinimal ? false : isSidebarExpanded
             } else {
                 let btn = WindowButton(windowInfo: win)
-                btn.isExpanded = isSidebarExpanded
+                btn.isMinimalMode = isMinimal
+                btn.isExpanded = isMinimal ? false : isSidebarExpanded
                 btn.onToggle = { [weak self] in
                     self?.toggleWindow(win.windowId)
                 }
@@ -798,10 +930,34 @@ class SidebarController {
                 btn.onFocusTab = { [weak self] tab in
                     self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
                 }
+                // Wire open repo for placeholder windows
+                if win.isPlaceholder, let repo = appConfig.repos.first(where: { $0.num == win.matchedRepoNum }) {
+                    btn.onOpenRepo = { [weak self] in
+                        self?.scanner.openWindowWithCWD(
+                            path: repo.expandedPath,
+                            autoStartClaude: appConfig.autoStartClaude ?? false
+                        )
+                    }
+                }
+                // Wire focus highest-priority tab for minimal mode
+                btn.onFocusHighPriorityTab = { [weak self] in
+                    let tab = win.tabs.max(by: { $0.state < $1.state }) ?? win.tabs.first
+                    if let tab = tab {
+                        self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
+                    }
+                }
                 btn.translatesAutoresizingMaskIntoConstraints = false
                 windowStack.addArrangedSubview(btn)
                 btn.widthAnchor.constraint(equalTo: windowStack.widthAnchor).isActive = true
                 windowButtons[win.windowId] = btn
+            }
+        }
+
+        // Reorder arranged subviews to match slot order
+        for (index, win) in slots.enumerated() {
+            if let btn = windowButtons[win.windowId] {
+                windowStack.removeArrangedSubview(btn)
+                windowStack.insertArrangedSubview(btn, at: index)
             }
         }
 

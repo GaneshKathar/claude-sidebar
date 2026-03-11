@@ -12,7 +12,7 @@ class ITermScanner {
     private var cwdCache: [String: (String, Date)] = [:]     // tty -> (cwd, time)
     private var appleScriptInFlight = false
     private var labelCache: [Int: String] = [:]              // windowId -> stable label
-    private var nextLetterIdx = 0
+    private var nextNonRepoNum = 0                             // initialized on first scan
 
     private static let maxCacheSize = 500
     private static let maxBranchWalkDepth = 50
@@ -178,25 +178,24 @@ class ITermScanner {
         }
 
         // Assign display labels: repo-matched windows get "1","2",...
-        // Others get sticky "A","B",... that persist until the app restarts.
-        // Prune cached labels for windows that no longer exist.
-        let currentIds = Set(windowOrder)
-        labelCache = labelCache.filter { currentIds.contains($0.key) }
+        // Others get sequential numbers continuing after repos (5,6,7...).
+        // Labels are never pruned — once assigned, a number is consumed for the session.
+        if nextNonRepoNum == 0 {
+            nextNonRepoNum = 1
+        }
 
-        let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         for wid in windowOrder {
             guard var win = windowMap[wid] else { continue }
-            if let repoNum = matchWindowToRepo(win) {
-                win.displayLabel = "\(repoNum)"
+            if let repo = matchWindowToRepo(win) {
+                win.displayLabel = repo.displayLabel
+                win.matchedRepoNum = repo.num
             } else if let cached = labelCache[wid] {
                 win.displayLabel = cached
             } else {
-                let letter = nextLetterIdx < letters.count
-                    ? String(letters[letters.index(letters.startIndex, offsetBy: nextLetterIdx)])
-                    : "\(nextLetterIdx)"
-                win.displayLabel = letter
-                labelCache[wid] = letter
-                nextLetterIdx += 1
+                let label = "\(nextNonRepoNum)"
+                nextNonRepoNum += 1
+                win.displayLabel = label
+                labelCache[wid] = label
             }
             windowMap[wid] = win
         }
@@ -224,14 +223,14 @@ class ITermScanner {
         return true
     }
 
-    // Check if any Claude tab in this window has a CWD matching a configured repo
-    private func matchWindowToRepo(_ win: ITermWindowInfo) -> Int? {
+    // Check if any tab in this window has a CWD matching a configured repo
+    private func matchWindowToRepo(_ win: ITermWindowInfo) -> RepoConfig? {
         for tab in win.tabs {
             guard let cwd = tab.cwd else { continue }
             for repo in appConfig.repos {
                 let repoPath = repo.expandedPath
                 if cwd == repoPath || cwd.hasPrefix(repoPath + "/") {
-                    return repo.num
+                    return repo
                 }
             }
         }
@@ -407,6 +406,28 @@ class ITermScanner {
             appleScript.executeAndReturnError(&error)
             if let error = error {
                 os_log("createWindow AppleScript error: %{public}@", log: logger, type: .error, error.description)
+            }
+        }
+    }
+
+    func openWindowWithCWD(path: String, autoStartClaude: Bool = false) {
+        let escapedPath = escapeForAppleScript(path)
+        let cdCommand = "cd \\\"\(escapedPath)\\\""
+        let fullCommand = autoStartClaude ? "\(cdCommand) && claude" : cdCommand
+        let script = """
+        tell application "iTerm2"
+            activate
+            set newWin to (create window with default profile)
+            tell current session of newWin
+                write text "\(fullCommand)"
+            end tell
+        end tell
+        """
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+            if let error = error {
+                os_log("openWindowWithCWD AppleScript error: %{public}@", log: logger, type: .error, error.description)
             }
         }
     }
