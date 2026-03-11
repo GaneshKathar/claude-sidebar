@@ -11,6 +11,12 @@ CWD=$(extract cwd)
 
 [ -z "$SESSION_ID" ] && exit 0
 
+# Log each hook invocation
+LOG_DIR="/tmp/claude-sidebar"
+LOG_FILE="$LOG_DIR/hook.log"
+LOG_TS=$(date '+%H:%M:%S')
+echo "$LOG_TS [$SESSION_ID] event=$EVENT cwd=$CWD input=$INPUT" >> "$LOG_FILE" 2>/dev/null
+
 # TTY from parent (Claude) — macOS only
 TTY=""
 TTY=$(ps -p $PPID -o tty= 2>/dev/null)

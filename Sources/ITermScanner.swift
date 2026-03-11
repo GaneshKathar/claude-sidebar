@@ -311,20 +311,7 @@ class ITermScanner {
         return result?.isEmpty == true ? nil : result
     }
 
-    // Public cached branch lookup (called from SidebarController.fastPoll)
-    func getBranchCached(cwd: String) -> String? {
-        let cacheTTL = appConfig.branchCacheTTL ?? 10.0
-        if let cached = branchCache[cwd], Date().timeIntervalSince(cached.1) < cacheTTL {
-            return cached.0
-        }
-        if let branch = getBranch(cwd: cwd) {
-            branchCache[cwd] = (branch, Date())
-            return branch
-        }
-        return nil
-    }
-
-    private func getBranch(cwd: String) -> String? {
+    func getBranch(cwd: String) -> String? {
         // Walk up from CWD to find git repo, with depth limit
         var path = cwd
         let fm = FileManager.default

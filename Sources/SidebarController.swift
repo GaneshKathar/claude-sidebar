@@ -621,6 +621,10 @@ class SidebarController {
     // MARK: - Poll Methods
 
     private func instantUpdate() {
+        if fullPollInFlight {
+            pendingInstantUpdate = true
+            return
+        }
         let hookStates = scanner.readHookStates()
         for wi in 0..<windows.count {
             for ti in 0..<windows[wi].tabs.count {
@@ -653,7 +657,7 @@ class SidebarController {
             // Batch branch detection from CWDs
             var branches: [String: String] = [:]
             for (tty, cwd) in cwds {
-                if let branch = self.scanner.getBranchCached(cwd: cwd) {
+                if let branch = self.scanner.getBranch(cwd: cwd) {
                     branches[tty] = branch
                 }
             }
@@ -700,10 +704,17 @@ class SidebarController {
     }
 
     private var fullPollInFlight = false
+    private var pendingInstantUpdate = false
     private func fullPoll() {
         guard !fullPollInFlight else { return }
         fullPollInFlight = true
-        defer { fullPollInFlight = false }
+        defer {
+            fullPollInFlight = false
+            if pendingInstantUpdate {
+                pendingInstantUpdate = false
+                instantUpdate()
+            }
+        }
 
         let newWindows = scanner.scan()
 

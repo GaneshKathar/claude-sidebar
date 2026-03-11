@@ -11,6 +11,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsController = SettingsWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Install global error handlers
+        NSSetUncaughtExceptionHandler { exception in
+            os_log("Uncaught exception: %{public}@ — %{public}@", log: logger, type: .fault,
+                   exception.name.rawValue, exception.reason ?? "no reason")
+            os_log("Stack trace: %{public}@", log: logger, type: .fault,
+                   exception.callStackSymbols.joined(separator: "\n"))
+        }
+        for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE] {
+            signal(sig) { sigNum in
+                os_log("Fatal signal %d received", log: logger, type: .fault, sigNum)
+            }
+        }
+
         let stateDir = "/tmp/claude-sidebar"
         let fm = FileManager.default
 
@@ -36,5 +49,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         sidebar = SidebarController()
         sidebar?.start()
+
+        os_log("App launched successfully", log: logger, type: .info)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        os_log("App terminating", log: logger, type: .info)
     }
 }
