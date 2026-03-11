@@ -49,6 +49,10 @@ class SidebarController {
     private var dockSide: DockSide = .right
     private var snapWorkItem: DispatchWorkItem?
 
+    // Drag state
+    private var isDragging = false
+    private var userY: CGFloat?          // set whenever the user drags; nil = use default (center)
+
     // Width state
     private let collapsedWidth: CGFloat = 62
     private let expandedWidth: CGFloat = 300
@@ -308,6 +312,17 @@ class SidebarController {
 
     // MARK: - Position
 
+    /// Returns the screen whose frame contains the window's center, or falls back to NSScreen.main.
+    private func screenForWindow() -> NSScreen? {
+        let center = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(center) }) ?? NSScreen.main
+    }
+
+    /// Clamps a Y origin so the window stays within the visible frame.
+    private func clampY(_ y: CGFloat, height: CGFloat, in sf: NSRect) -> CGFloat {
+        min(max(y, sf.minY), sf.maxY - height)
+    }
+
     private func collapsedContentHeight() -> CGFloat {
         let headerH: CGFloat = 44
         let padding: CGFloat = 12
@@ -318,20 +333,21 @@ class SidebarController {
     }
 
     private func resizeCollapsedToFitContent() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenForWindow() else { return }
         let sf = screen.visibleFrame
         let targetH = collapsedContentHeight()
         let frame = window.frame
         // Only resize if height changed meaningfully
         guard abs(frame.height - targetH) > 2 else { return }
-        let newY = sf.midY - targetH / 2
+        let baseY = userY ?? (sf.midY - targetH / 2)
+        let newY = clampY(baseY, height: targetH, in: sf)
         let newFrame = NSRect(x: frame.origin.x, y: newY, width: frame.width, height: targetH)
         window.setFrame(newFrame, display: true)
         layoutSubviews()
     }
 
     private func positionWindow() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenForWindow() else { return }
         let sf = screen.visibleFrame
         let currentWidth = isSidebarExpanded ? expandedWidth : collapsedWidth
         let h = isSidebarExpanded ? sf.height * 0.7 : collapsedContentHeight()
@@ -340,7 +356,8 @@ class SidebarController {
         case .right: x = sf.maxX - currentWidth
         case .left:  x = sf.minX
         }
-        let y = sf.midY - h / 2
+        let baseY = userY ?? (sf.midY - h / 2)
+        let y = clampY(baseY, height: h, in: sf)
         window.setFrame(NSRect(x: x, y: y, width: currentWidth, height: h), display: true)
     }
 
@@ -357,8 +374,10 @@ class SidebarController {
     }
 
     private func handleScreenChange() {
-        // Ensure window is still on-screen after monitor changes
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenForWindow() else {
+            positionWindow()  // fallback: no screen found
+            return
+        }
         let sf = screen.visibleFrame
         var frame = window.frame
 
@@ -368,13 +387,12 @@ class SidebarController {
             return
         }
 
-        // Snap to the correct dock edge
+        // Re-snap to dock edge
         switch dockSide {
         case .right: frame.origin.x = sf.maxX - frame.width
         case .left:  frame.origin.x = sf.minX
         }
-        if frame.maxY > sf.maxY { frame.origin.y = sf.maxY - frame.height }
-        if frame.minY < sf.minY { frame.origin.y = sf.minY }
+        frame.origin.y = clampY(frame.origin.y, height: frame.height, in: sf)
         window.setFrame(frame, display: true)
     }
 
@@ -392,6 +410,8 @@ class SidebarController {
 
     private func handleWindowMoved() {
         guard !isAnimating else { return }
+        isDragging = true
+        userY = window.frame.origin.y
         // Debounce: schedule snap check after a brief delay (user may still be dragging)
         snapWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -403,35 +423,34 @@ class SidebarController {
 
     private func snapAfterDrag() {
         guard !isAnimating else { return }
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenForWindow() else { return }
         let sf = screen.visibleFrame
         let frame = window.frame
-        let centerX = frame.midX
-        let screenMidX = sf.midX
 
-        // Determine new dock side based on which half the center is in
-        if centerX < screenMidX {
-            dockSide = .left
-        } else {
-            dockSide = .right
-        }
+        // Nearest edge wins (distance from window edge to screen edge)
+        let distToLeft = frame.minX - sf.minX
+        let distToRight = sf.maxX - frame.maxX
 
-        // Animate to docked edge
+        dockSide = distToLeft <= distToRight ? .left : .right
+
         let targetX: CGFloat
         switch dockSide {
         case .right: targetX = sf.maxX - frame.width
         case .left:  targetX = sf.minX
         }
 
-        let snappedFrame = NSRect(x: targetX, y: frame.origin.y, width: frame.width, height: frame.height)
+        let clampedY = clampY(frame.origin.y, height: frame.height, in: sf)
+        let snappedFrame = NSRect(x: targetX, y: clampedY,
+                                  width: frame.width, height: frame.height)
 
         isAnimating = true
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().setFrame(snappedFrame, display: true)
         }, completionHandler: { [weak self] in
             self?.isAnimating = false
+            self?.isDragging = false
         })
     }
 
@@ -448,7 +467,7 @@ class SidebarController {
     }
 
     private func checkMousePosition() {
-        guard !isAnimating else { return }
+        guard !isAnimating, !isDragging else { return }
         // Minimal mode: never expand on hover
         if appConfig.minimalView == true { return }
 
@@ -472,7 +491,7 @@ class SidebarController {
         isAnimating = true
 
         let frame = window.frame
-        guard let screen = NSScreen.main else { isAnimating = false; return }
+        guard let screen = screenForWindow() else { isAnimating = false; return }
         let sf = screen.visibleFrame
         let expandedHeight = sf.height * 0.7
 
@@ -481,8 +500,9 @@ class SidebarController {
         case .right: newX = frame.maxX - expandedWidth
         case .left:  newX = frame.origin.x
         }
-        // Re-center vertically when expanding height
-        let newY = sf.midY - expandedHeight / 2
+        // Preserve user's Y position instead of always centering
+        let baseY = userY ?? (sf.midY - expandedHeight / 2)
+        let newY = clampY(baseY, height: expandedHeight, in: sf)
         let newFrame = NSRect(x: newX, y: newY, width: expandedWidth, height: expandedHeight)
 
         // Switch buttons to expanded BEFORE animation so layout is ready
@@ -492,7 +512,7 @@ class SidebarController {
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().setFrame(newFrame, display: true)
             titleLabel.animator().alphaValue = 1
         }, completionHandler: { [weak self] in
@@ -524,14 +544,16 @@ class SidebarController {
         case .right: newX = frame.maxX - collapsedWidth
         case .left:  newX = frame.origin.x
         }
-        guard let screen = NSScreen.main else { isAnimating = false; return }
+        guard let screen = screenForWindow() else { isAnimating = false; return }
         let sf = screen.visibleFrame
-        let newY = sf.midY - collapsedHeight / 2
+        // Preserve user's Y position instead of always centering
+        let baseY = userY ?? (sf.midY - collapsedHeight / 2)
+        let newY = clampY(baseY, height: collapsedHeight, in: sf)
         let newFrame = NSRect(x: newX, y: newY, width: collapsedWidth, height: collapsedHeight)
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().setFrame(newFrame, display: true)
             titleLabel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
