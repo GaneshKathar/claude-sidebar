@@ -9,7 +9,8 @@ private let configLogger = OSLog(subsystem: "com.claudesidebar", category: "AppC
 struct RepoConfig: Codable {
     let num: Int
     let path: String
-    var label: String?           // single char or single emoji
+    var label: String?           // badge character (emoji or short text)
+    var title: String?           // custom display name shown in expanded header
 
     var displayLabel: String {   // falls back to "\(num)"
         label ?? "\(num)"
@@ -277,6 +278,7 @@ struct ITermWindowInfo {
     var windowId: Int
     var windowName: String
     var displayLabel: String  // "1","2" for repo windows, "5","6" for others
+    var displayPath: String? = nil  // short path shown below name in expanded box
     var tabs: [ITermTabInfo]
     var matchedRepoNum: Int?     // set during scan, nil for non-repo windows
     var isPlaceholder: Bool = false  // true for repos with no active window
@@ -300,8 +302,9 @@ struct ITermWindowInfo {
     static func placeholder(for repo: RepoConfig) -> ITermWindowInfo {
         ITermWindowInfo(
             windowId: -repo.num,   // negative to avoid collision with real windows
-            windowName: repo.expandedPath,
+            windowName: repo.title ?? (repo.expandedPath as NSString).lastPathComponent,
             displayLabel: repo.displayLabel,
+            displayPath: nil,
             tabs: [],
             matchedRepoNum: repo.num,
             isPlaceholder: true

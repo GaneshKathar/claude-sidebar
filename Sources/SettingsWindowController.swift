@@ -4,7 +4,7 @@ import AppKit
 
 class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate {
     private var window: NSWindow?
-    private var repoList: [(num: Int, path: String, label: String?)] = []
+    private var repoList: [(num: Int, path: String, label: String?, title: String?)] = []
     private var pollIntervalStepper: NSStepper!
     private var pollIntervalLabel: NSTextField!
     private var staleTimeoutStepper: NSStepper!
@@ -36,13 +36,13 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         isFirstTime = firstTime
 
         // Load current config into editable list
-        repoList = appConfig.repos.map { (num: $0.num, path: $0.path, label: $0.label) }
+        repoList = appConfig.repos.map { (num: $0.num, path: $0.path, label: $0.label, title: $0.title) }
 
         colorWells = []
         hexFields = []
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 792),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 848),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -59,7 +59,28 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         contentView.autoresizingMask = [.width, .height]
         win.contentView = contentView
 
-        var yOffset: CGFloat = 752
+        var yOffset: CGFloat = 808
+
+        // === Session detection notice — shown only on first install ===
+        let noticeKey = "com.claudesidebar.sessionWarningShown"
+        if !UserDefaults.standard.bool(forKey: noticeKey) {
+            UserDefaults.standard.set(true, forKey: noticeKey)
+            yOffset -= 56
+            let noticeBg = NSView()
+            noticeBg.wantsLayer = true
+            noticeBg.layer?.backgroundColor = NSColor(red: 1.0, green: 0.85, blue: 0.35, alpha: 0.12).cgColor
+            noticeBg.layer?.cornerRadius = 6
+            noticeBg.layer?.borderColor = NSColor(red: 1.0, green: 0.75, blue: 0.2, alpha: 0.4).cgColor
+            noticeBg.layer?.borderWidth = 1
+            noticeBg.frame = NSRect(x: 16, y: yOffset, width: 448, height: 50)
+            contentView.addSubview(noticeBg)
+
+            let noticeText = NSTextField(wrappingLabelWithString: "⚠︎  Sidebar may not detect already-running sessions correctly. Restart your Claude session so the sidebar can identify the correct window and tab.")
+            noticeText.font = .systemFont(ofSize: 11)
+            noticeText.textColor = NSColor(red: 0.7, green: 0.5, blue: 0.0, alpha: 1)
+            noticeText.frame = NSRect(x: 10, y: 6, width: 428, height: 38)
+            noticeBg.addSubview(noticeText)
+        }
 
         // === First-time banner ===
         if firstTime {
@@ -97,14 +118,20 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         tableView.addTableColumn(numCol)
 
         let labelCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("label"))
-        labelCol.title = "Label"
-        labelCol.width = 50
+        labelCol.title = "Badge"
+        labelCol.width = 46
         labelCol.isEditable = false
         tableView.addTableColumn(labelCol)
 
+        let titleCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
+        titleCol.title = "Title"
+        titleCol.width = 100
+        titleCol.isEditable = false
+        tableView.addTableColumn(titleCol)
+
         let pathCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("path"))
         pathCol.title = "Path"
-        pathCol.width = 290
+        pathCol.width = 184
         pathCol.isEditable = false
         tableView.addTableColumn(pathCol)
 
@@ -249,7 +276,6 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             ("Idle",    Theme.green),
             ("Working", Theme.blue),
             ("Alert",   Theme.red),
-            ("Running", Theme.yellow),
         ]
         for (idx, def) in colorDefs.enumerated() {
             yOffset -= 28
@@ -270,6 +296,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             hexField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             hexField.frame = NSRect(x: 194, y: yOffset, width: 90, height: 22)
             hexField.placeholderString = "#rrggbb"
+            hexField.isEditable = true
+            hexField.isSelectable = true   // allows copy/paste
             hexField.delegate = self
             hexField.tag = 100 + idx
             contentView.addSubview(hexField)
@@ -357,8 +385,20 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             cell.isBezeled = true
             cell.bezelStyle = .roundedBezel
             cell.isEditable = true
+            cell.isSelectable = true
             cell.delegate = self
-            cell.tag = row
+            cell.tag = row          // tags 0..N = label rows
+            return cell
+        } else if id == "title" {
+            let cell = NSTextField(string: repo.title ?? "")
+            cell.font = .systemFont(ofSize: 12)
+            cell.placeholderString = "Custom name"
+            cell.isBezeled = true
+            cell.bezelStyle = .roundedBezel
+            cell.isEditable = true
+            cell.isSelectable = true
+            cell.delegate = self
+            cell.tag = 200 + row    // tags 200..2N = title rows
             return cell
         } else if id == "path" {
             let cell = NSTextField(labelWithString: repo.path)
@@ -382,8 +422,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         guard let textField = obj.object as? NSTextField else { return }
         let row = textField.tag
 
-        // Tags 100–103 are hex color fields
-        if row >= 100 && row < 104 {
+        // Tags 100–102: hex color fields
+        if row >= 100 && row < 103 {
             let idx = row - 100
             if let color = NSColor(hexString: textField.stringValue), idx < colorWells.count {
                 colorWells[idx].color = color
@@ -391,12 +431,22 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             return
         }
 
+        // Tags 200+: title fields
+        if row >= 200 {
+            let repoRow = row - 200
+            guard repoRow < repoList.count else { return }
+            let text = textField.stringValue
+            repoList[repoRow].title = text.isEmpty ? nil : text
+            return
+        }
+
         guard row < repoList.count else { return }
 
         var text = textField.stringValue
-        // Enforce single character: keep only first Unicode scalar
-        if text.count > 1 {
-            text = String(text.prefix(1))
+        // Allow up to 2 grapheme clusters (single emoji = 1 cluster, flag = 1 cluster)
+        let clusters = Array(text)
+        if clusters.count > 2 {
+            text = String(clusters.prefix(2))
             textField.stringValue = text
         }
         repoList[row].label = text.isEmpty ? nil : text
@@ -441,7 +491,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         let home = NSHomeDirectory()
         let displayPath = path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
 
-        repoList.append((num: nextNum, path: displayPath, label: nil))
+        repoList.append((num: nextNum, path: displayPath, label: nil, title: nil))
         repoList.sort { $0.num < $1.num }
         tableView.reloadData()
     }
@@ -461,7 +511,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         var added = 0
         for repo in detected {
             if !existingPaths.contains(repo.path) {
-                repoList.append((num: 0, path: repo.path, label: repo.label))
+                repoList.append((num: 0, path: repo.path, label: repo.label, title: repo.title))
                 added += 1
             }
         }
@@ -540,8 +590,10 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     }
 
     @objc private func saveSettings() {
+        // Force any in-progress text field edits to commit before reading values
+        window?.makeFirstResponder(nil)
         let newConfig = AppConfig(
-            repos: repoList.map { RepoConfig(num: $0.num, path: $0.path, label: $0.label) },
+            repos: repoList.map { RepoConfig(num: $0.num, path: $0.path, label: $0.label, title: $0.title) },
             pollInterval: pollIntervalStepper.doubleValue,
             branchCacheTTL: branchCacheStepper.doubleValue,
             staleTimeout: staleTimeoutStepper.doubleValue * 60,
@@ -552,7 +604,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             colorIdle:    colorWells.count > 0 ? colorWells[0].color.hexString : nil,
             colorWorking: colorWells.count > 1 ? colorWells[1].color.hexString : nil,
             colorAlert:   colorWells.count > 2 ? colorWells[2].color.hexString : nil,
-            colorRunning: colorWells.count > 3 ? colorWells[3].color.hexString : nil
+            colorRunning: nil
         )
         newConfig.save()
         isFirstTime = false

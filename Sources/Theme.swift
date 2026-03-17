@@ -27,28 +27,28 @@ extension NSColor {
 // MARK: - Theme
 
 struct Theme {
-    static let bg = NSColor(red: 30/255, green: 30/255, blue: 46/255, alpha: 0.92)
-    static let bgSolid = NSColor(red: 30/255, green: 30/255, blue: 46/255, alpha: 0.98)
+    static let bg = NSColor(red: 17/255, green: 17/255, blue: 32/255, alpha: 0.97)   // #111120
+    static let bgSolid = NSColor(red: 17/255, green: 17/255, blue: 32/255, alpha: 0.99)
     static let border = NSColor(white: 1.0, alpha: 0.08)
     static let textDim = NSColor(white: 1.0, alpha: 0.25)
     static let textMid = NSColor(white: 1.0, alpha: 0.5)
     static let textBright = NSColor(white: 1.0, alpha: 0.9)
     // Status colors — read from appConfig so settings changes take effect immediately
-    static var green: NSColor {   // idle / process success
+    static var green: NSColor {   // idle — soft blue
         appConfig.colorIdle.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(red: 88/255, green: 139/255, blue: 139/255, alpha: 1.0)
+            ?? NSColor(hexString: "#7DD3FC")!
     }
-    static var blue: NSColor {    // Claude working
+    static var blue: NSColor {    // Claude working — teal
         appConfig.colorWorking.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(red: 242/255, green: 143/255, blue: 59/255, alpha: 1.0)
+            ?? NSColor(hexString: "#2DD4BF")!
     }
-    static var red: NSColor {     // alert / process error
+    static var red: NSColor {     // alert — coral
         appConfig.colorAlert.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(red: 200/255, green: 85/255, blue: 61/255, alpha: 1.0)
+            ?? NSColor(hexString: "#F87171")!
     }
-    static var yellow: NSColor {  // process running
+    static var yellow: NSColor {  // process running (not user-configurable, kept for compatibility)
         appConfig.colorRunning.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(red: 255/255, green: 213/255, blue: 194/255, alpha: 1.0)
+            ?? NSColor(hexString: "#AAC4F5")!
     }
     static let purple = NSColor(red: 168/255, green: 85/255, blue: 247/255, alpha: 1.0)
     static let hover = NSColor(white: 1.0, alpha: 0.08)

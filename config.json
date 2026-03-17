@@ -1,15 +1,19 @@
 {
-  "autoStartClaude" : true,
+  "autoStartClaude" : false,
   "branchCacheTTL" : 10,
+  "colorAlert" : "#F87171",
+  "colorIdle" : "#7DD3FC",
+  "colorWorking" : "#2DD4BF",
   "fontScale" : 1,
   "launchAtLogin" : false,
-  "minimalView" : true,
+  "minimalView" : false,
   "pollInterval" : 10,
   "repos" : [
     {
       "label" : "S1",
       "num" : 1,
-      "path" : "~\/rubrik\/sdmain-1"
+      "path" : "~\/rubrik\/sdmain-1",
+      "title" : "Feature work"
     },
     {
       "label" : "S2",
@@ -17,12 +21,12 @@
       "path" : "~\/rubrik\/sdmain-2"
     },
     {
-      "label" : "S3",
+      "label" : "S4",
       "num" : 3,
       "path" : "~\/rubrik\/sdmain-3"
     },
     {
-      "label" : "S4",
+      "label" : "S5",
       "num" : 4,
       "path" : "~\/rubrik\/sdmain-4"
     }

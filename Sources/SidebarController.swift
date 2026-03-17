@@ -90,7 +90,7 @@ class SidebarController {
         // Main content view — flipped so y=0 is at top
         contentView = FlippedView()
         contentView.wantsLayer = true
-        contentView.layer?.cornerRadius = 12
+        contentView.layer?.cornerRadius = 16
         contentView.layer?.backgroundColor = Theme.bg.cgColor
         contentView.layer?.borderColor = Theme.border.cgColor
         contentView.layer?.borderWidth = 1
@@ -110,16 +110,16 @@ class SidebarController {
 
         windowStack = NSStackView()
         windowStack.orientation = .vertical
-        windowStack.spacing = 4
+        windowStack.spacing = 12
         windowStack.alignment = .leading
         windowStack.translatesAutoresizingMaskIntoConstraints = false
         docView.addSubview(windowStack)
 
         NSLayoutConstraint.activate([
-            windowStack.topAnchor.constraint(equalTo: docView.topAnchor, constant: 4),
-            windowStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: 4),
-            windowStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -4),
-            windowStack.bottomAnchor.constraint(lessThanOrEqualTo: docView.bottomAnchor, constant: -4),
+            windowStack.topAnchor.constraint(equalTo: docView.topAnchor, constant: 12),
+            windowStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: 12),
+            windowStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -12),
+            windowStack.bottomAnchor.constraint(lessThanOrEqualTo: docView.bottomAnchor, constant: -12),
         ])
 
         // --- Header ---
@@ -188,16 +188,16 @@ class SidebarController {
     private func layoutSubviews() {
         let w = contentView.bounds.width
         let h = contentView.bounds.height
-        let headerH: CGFloat = 44
+        let headerH: CGFloat = 48
         let footerH: CGFloat = isSidebarExpanded ? 44 : 0
 
         headerView.frame = NSRect(x: 0, y: 0, width: w, height: headerH)
 
         // Center logo in collapsed, left-align in expanded
         if isSidebarExpanded {
-            logoView.frame = NSRect(x: 17, y: 8, width: 28, height: 28)
+            logoView.frame = NSRect(x: 17, y: 10, width: 28, height: 28)
         } else {
-            logoView.frame = NSRect(x: (w - 28) / 2, y: 8, width: 28, height: 28)
+            logoView.frame = NSRect(x: (w - 28) / 2, y: 10, width: 28, height: 28)
         }
 
         let scrollTop = headerH + 4
@@ -213,7 +213,7 @@ class SidebarController {
 
         // After stack layout, resize docView to fit content
         windowStack.layoutSubtreeIfNeeded()
-        let contentHeight = windowStack.fittingSize.height + 8
+        let contentHeight = windowStack.fittingSize.height + 24  // 12px top + 12px bottom margins
         docView.frame = NSRect(x: 0, y: 0, width: clipW, height: max(contentHeight, scrollH))
     }
 
@@ -234,7 +234,7 @@ class SidebarController {
         gradient.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
         gradient.cornerRadius = 6
         logoView.layer?.addSublayer(gradient)
-        logoView.frame = NSRect(x: 17, y: 8, width: 28, height: 28)
+        logoView.frame = NSRect(x: 17, y: 10, width: 28, height: 28)
         headerView.addSubview(logoView)
 
         let logoText = NSTextField(labelWithString: "C")
@@ -255,13 +255,13 @@ class SidebarController {
         titleLabel.isEditable = false
         titleLabel.isSelectable = false
         titleLabel.alphaValue = 0
-        titleLabel.frame = NSRect(x: 55, y: 12, width: 200, height: 20)
+        titleLabel.frame = NSRect(x: 55, y: 14, width: 200, height: 20)
         headerView.addSubview(titleLabel)
 
         let headerBorder = NSView()
         headerBorder.wantsLayer = true
         headerBorder.layer?.backgroundColor = Theme.border.cgColor
-        headerBorder.frame = NSRect(x: 0, y: 43, width: 300, height: 1)
+        headerBorder.frame = NSRect(x: 0, y: 47, width: 300, height: 1)
         headerBorder.autoresizingMask = [.width]
         headerView.addSubview(headerBorder)
     }
@@ -321,8 +321,8 @@ class SidebarController {
     }
 
     private func collapsedContentHeight() -> CGFloat {
-        let headerH: CGFloat = 44
-        let padding: CGFloat = 12
+        let headerH: CGFloat = 48
+        let padding: CGFloat = 28  // 4(scrollOffset) + 12(stackTop) + 12(stackBottom)
         windowStack.layoutSubtreeIfNeeded()
         let stackH = windowStack.fittingSize.height
         let minHeight: CGFloat = 80
@@ -475,7 +475,12 @@ class SidebarController {
         let hitZone = NSRect(x: frame.origin.x - 4, y: frame.origin.y - 4,
                              width: frame.width + 8, height: frame.height + 8)
 
-        if hitZone.contains(mouse) && !isSidebarExpanded {
+        // Don't expand when hovering the header (logo area) — keep it free for dragging
+        let headerH: CGFloat = 48
+        let inHeader = mouse.y >= frame.origin.y + frame.height - headerH
+            && mouse.x >= frame.origin.x && mouse.x <= frame.maxX
+
+        if hitZone.contains(mouse) && !isSidebarExpanded && !inHeader {
             expandSidebar()
         } else if !hitZone.contains(mouse) && isSidebarExpanded {
             collapseSidebar()
@@ -1003,10 +1008,13 @@ class SidebarController {
                 let indexedTabs = repoTabs.enumerated().map { idx, t -> ITermTabInfo in
                     var tab = t; tab.tabIndex = idx; return tab
                 }
+                // Window name: custom title if set, else last path component
+                let slotName = repo.title ?? (repoPath as NSString).lastPathComponent
                 slots.append(ITermWindowInfo(
-                    windowId: -repo.num,             // stable ID reusing placeholder ID
-                    windowName: shortPath(repoPath),
+                    windowId: -repo.num,
+                    windowName: slotName,
                     displayLabel: repo.displayLabel,
+                    displayPath: shortPath(repoPath),
                     tabs: indexedTabs,
                     matchedRepoNum: repo.num
                 ))
@@ -1046,8 +1054,9 @@ class SidebarController {
             }
             slots.append(ITermWindowInfo(
                 windowId: windowId,
-                windowName: shortPath(key),
+                windowName: (key as NSString).lastPathComponent,
                 displayLabel: label,
+                displayPath: shortPath(key),
                 tabs: indexedTabs
             ))
             tabs.forEach { claimedTTYs.insert($0.tty) }

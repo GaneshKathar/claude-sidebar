@@ -8,50 +8,37 @@ class TabCard: NSView {
     var onFocus: (() -> Void)?
     private var trackingArea: NSTrackingArea?
     private var isHovered = false
-    private let borderView = NSView()
 
-    init(tab: ITermTabInfo, appName: String? = nil) {
+    init(tab: ITermTabInfo, appName: String? = nil, isLastTab: Bool = true) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.03).cgColor
+        // Transparent by default — box background shows through; hover adds subtle tint
 
-        // Left border colored by state
-        borderView.wantsLayer = true
-        borderView.layer?.cornerRadius = 1
-        borderView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(borderView)
+        // ── Row 1: dot + CWD (truncate head) + app (right-aligned) ──
+        let row1 = NSView()
+        row1.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row1)
 
-        if tab.hasClaude {
-            borderView.layer?.backgroundColor = tab.claudeState.color.withAlphaComponent(0.4).cgColor
-        } else if let proc = tab.processInfo {
-            borderView.layer?.backgroundColor = proc.state.color.withAlphaComponent(0.4).cgColor
-        } else {
-            borderView.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.15).cgColor
-        }
+        // State dot (8px circle)
+        let dot8 = NSView()
+        dot8.wantsLayer = true
+        dot8.layer?.cornerRadius = 4
+        dot8.layer?.backgroundColor = tab.state.color.cgColor
+        dot8.translatesAutoresizingMaskIntoConstraints = false
+        row1.addSubview(dot8)
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 2
-        stack.alignment = .leading
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-
-        // Row 1: CWD (left, expands) + app name (right, dim, replaces the old ⌘ icon)
-        let row1 = NSStackView()
-        row1.orientation = .horizontal
-        row1.spacing = 4
-        row1.alignment = .centerY
-
+        // CWD label — truncate head, 10pt mono, 54% white
         let cwdLabel = NSTextField(labelWithString: "")
         cwdLabel.font = Theme.monoFont(ofSize: 10)
-        cwdLabel.textColor = NSColor(white: 1.0, alpha: 0.45)
+        cwdLabel.textColor = NSColor(white: 1.0, alpha: 0.54)
         cwdLabel.lineBreakMode = .byTruncatingHead
         cwdLabel.maximumNumberOfLines = 1
         cwdLabel.isBezeled = false
         cwdLabel.drawsBackground = false
         cwdLabel.isEditable = false
         cwdLabel.isSelectable = false
+        cwdLabel.allowsExpansionToolTips = false
+        cwdLabel.translatesAutoresizingMaskIntoConstraints = false
         if let cwd = tab.cwd {
             let home = NSHomeDirectory()
             cwdLabel.stringValue = cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
@@ -59,79 +46,129 @@ class TabCard: NSView {
             cwdLabel.stringValue = "Tab \(tab.tabIndex)"
             cwdLabel.textColor = NSColor(white: 1.0, alpha: 0.3)
         }
-        cwdLabel.allowsExpansionToolTips = false
         cwdLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         cwdLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        row1.addArrangedSubview(cwdLabel)
+        row1.addSubview(cwdLabel)
 
-        if let appName = appName, !appName.isEmpty {
-            let appLabel = NSTextField(labelWithString: appName)
-            appLabel.font = Theme.font(ofSize: 8.5)
-            appLabel.textColor = NSColor(white: 1.0, alpha: 0.28)
-            appLabel.isBezeled = false
-            appLabel.drawsBackground = false
-            appLabel.isEditable = false
-            appLabel.isSelectable = false
-            appLabel.setContentHuggingPriority(.required, for: .horizontal)
-            row1.addArrangedSubview(appLabel)
-        }
+        // App label — right-aligned, 9pt, 24% white, min-width 36px
+        let appLabel = NSTextField(labelWithString: appName ?? "")
+        appLabel.font = Theme.font(ofSize: 9)
+        appLabel.textColor = NSColor(white: 1.0, alpha: 0.24)
+        appLabel.alignment = .right
+        appLabel.isBezeled = false
+        appLabel.drawsBackground = false
+        appLabel.isEditable = false
+        appLabel.isSelectable = false
+        appLabel.lineBreakMode = .byTruncatingTail
+        appLabel.maximumNumberOfLines = 1
+        appLabel.translatesAutoresizingMaskIntoConstraints = false
+        appLabel.setContentHuggingPriority(.required, for: .horizontal)
+        appLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        row1.addSubview(appLabel)
 
-        stack.addArrangedSubview(row1)
-
-        // Row 2: Branch (if available)
+        // ── Row 2: branch (indent 16px) ──
+        var row2: NSView? = nil
         if let branch = tab.gitBranch, !branch.isEmpty {
-            let row2 = NSStackView()
-            row2.orientation = .horizontal
-            row2.spacing = 3
-            row2.alignment = .centerY
+            let r2 = NSView()
+            r2.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(r2)
+            row2 = r2
 
             let branchIcon = NSTextField(labelWithString: "\u{2387}")
-            branchIcon.font = Theme.font(ofSize: 10)
-            branchIcon.textColor = NSColor(white: 1.0, alpha: 0.25)
+            branchIcon.font = Theme.font(ofSize: 9)
+            branchIcon.textColor = NSColor(white: 1.0, alpha: 0.2)
             branchIcon.isBezeled = false
             branchIcon.drawsBackground = false
             branchIcon.isEditable = false
             branchIcon.isSelectable = false
+            branchIcon.translatesAutoresizingMaskIntoConstraints = false
+            r2.addSubview(branchIcon)
 
             let branchName = NSTextField(labelWithString: branch)
-            branchName.font = Theme.font(ofSize: 10)
-            branchName.textColor = NSColor(white: 1.0, alpha: 0.4)
+            branchName.font = Theme.font(ofSize: 9)
+            branchName.textColor = NSColor(white: 1.0, alpha: 0.36)
             branchName.lineBreakMode = .byTruncatingTail
             branchName.maximumNumberOfLines = 1
             branchName.isBezeled = false
             branchName.drawsBackground = false
             branchName.isEditable = false
             branchName.isSelectable = false
+            branchName.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            branchName.translatesAutoresizingMaskIntoConstraints = false
+            r2.addSubview(branchName)
 
-            row2.addArrangedSubview(branchIcon)
-            row2.addArrangedSubview(branchName)
-            stack.addArrangedSubview(row2)
+            NSLayoutConstraint.activate([
+                branchIcon.leadingAnchor.constraint(equalTo: r2.leadingAnchor),
+                branchIcon.centerYAnchor.constraint(equalTo: r2.centerYAnchor),
+                branchName.leadingAnchor.constraint(equalTo: branchIcon.trailingAnchor, constant: 4),
+                branchName.trailingAnchor.constraint(lessThanOrEqualTo: r2.trailingAnchor),
+                branchName.centerYAnchor.constraint(equalTo: r2.centerYAnchor),
+                r2.heightAnchor.constraint(equalToConstant: 16),
+            ])
         }
 
-        // Row 3: Claude status OR process status
+        // ── Status line ──
+        var statusView: NSView? = nil
         if tab.hasClaude {
-            let row3 = makeClaudeStatusRow(tab: tab)
-            stack.addArrangedSubview(row3)
+            statusView = makeClaudeStatusRow(tab: tab)
         } else if let proc = tab.processInfo {
-            let row3 = makeProcessStatusRow(proc: proc)
-            stack.addArrangedSubview(row3)
+            statusView = makeProcessStatusRow(proc: proc)
+        }
+        if let sv = statusView {
+            sv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(sv)
         }
 
+        // ── Layout constraints ──
+        // Row 1: padding 8px top, 12px sides; gap 8px between dot/cwd/app
         NSLayoutConstraint.activate([
-            borderView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            borderView.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            borderView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            borderView.widthAnchor.constraint(equalToConstant: 2),
+            dot8.widthAnchor.constraint(equalToConstant: 8),
+            dot8.heightAnchor.constraint(equalToConstant: 8),
+            dot8.leadingAnchor.constraint(equalTo: row1.leadingAnchor),
+            dot8.centerYAnchor.constraint(equalTo: row1.centerYAnchor),
 
-            stack.leadingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            cwdLabel.leadingAnchor.constraint(equalTo: dot8.trailingAnchor, constant: 8),
+            cwdLabel.centerYAnchor.constraint(equalTo: row1.centerYAnchor),
+
+            appLabel.leadingAnchor.constraint(equalTo: cwdLabel.trailingAnchor, constant: 8),
+            appLabel.trailingAnchor.constraint(equalTo: row1.trailingAnchor),
+            appLabel.centerYAnchor.constraint(equalTo: row1.centerYAnchor),
+            appLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
+
+            row1.heightAnchor.constraint(equalToConstant: 16),
+
+            row1.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            row1.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            row1.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
         ])
 
-        // Row width constraint
-        row1.translatesAutoresizingMaskIntoConstraints = false
-        row1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // Row 2 (branch) — indent 16px from leading, 4px below row1
+        var lastBottomAnchor: NSLayoutYAxisAnchor = row1.bottomAnchor
+        var lastBottomConstant: CGFloat = 4
+
+        if let r2 = row2 {
+            NSLayoutConstraint.activate([
+                r2.topAnchor.constraint(equalTo: row1.bottomAnchor, constant: 4),
+                r2.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16 + 12),
+                r2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            ])
+            lastBottomAnchor = r2.bottomAnchor
+            lastBottomConstant = 0
+        }
+
+        // Status line: 4px top, 12px sides, isLastTab ? 12px : 8px bottom, 28px left indent
+        if let sv = statusView {
+            let bottomPad: CGFloat = isLastTab ? 12 : 8
+            NSLayoutConstraint.activate([
+                sv.topAnchor.constraint(equalTo: lastBottomAnchor, constant: 4),
+                sv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
+                sv.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+                sv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottomPad),
+            ])
+        } else {
+            let bottomPad: CGFloat = isLastTab ? 12 : 8
+            lastBottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottomPad).isActive = true
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -139,16 +176,16 @@ class TabCard: NSView {
     private func makeClaudeStatusRow(tab: ITermTabInfo) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 5
+        row.spacing = 4
         row.alignment = .centerY
 
         let dot = NSView()
         dot.wantsLayer = true
-        dot.layer?.cornerRadius = 3
+        dot.layer?.cornerRadius = 2
         dot.layer?.backgroundColor = tab.claudeState.color.cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
-        dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
-        dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
         if tab.claudeState == .working {
             dot.layer?.shadowColor = Theme.blue.cgColor
@@ -158,7 +195,7 @@ class TabCard: NSView {
         }
 
         let label = NSTextField(labelWithString: "")
-        label.font = Theme.font(ofSize: 10)
+        label.font = Theme.font(ofSize: 9, weight: .medium)
         label.isBezeled = false
         label.drawsBackground = false
         label.isEditable = false
@@ -187,32 +224,31 @@ class TabCard: NSView {
     private func makeProcessStatusRow(proc: ProcessInfo) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 5
+        row.spacing = 4
         row.alignment = .centerY
 
         switch proc.state {
         case .running:
-            // Spinner (yellow dot with glow for now — real spinner needs CALayer animation)
             let dot = NSView()
             dot.wantsLayer = true
-            dot.layer?.cornerRadius = 3
+            dot.layer?.cornerRadius = 2
             dot.layer?.backgroundColor = Theme.yellow.cgColor
             dot.layer?.shadowColor = Theme.yellow.cgColor
             dot.layer?.shadowRadius = 3
             dot.layer?.shadowOpacity = 0.4
             dot.layer?.shadowOffset = .zero
             dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
             let label = NSTextField(labelWithString: "Running")
-            label.font = Theme.font(ofSize: 10)
+            label.font = Theme.font(ofSize: 9, weight: .medium)
             label.textColor = Theme.yellow
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = Theme.monoFont(ofSize: 10)
+            name.font = Theme.monoFont(ofSize: 9)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.lineBreakMode = .byTruncatingTail
             name.maximumNumberOfLines = 1
@@ -234,20 +270,20 @@ class TabCard: NSView {
         case .success:
             let dot = NSView()
             dot.wantsLayer = true
-            dot.layer?.cornerRadius = 3
+            dot.layer?.cornerRadius = 2
             dot.layer?.backgroundColor = Theme.green.cgColor
             dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
             let label = NSTextField(labelWithString: "Completed")
-            label.font = Theme.font(ofSize: 10)
+            label.font = Theme.font(ofSize: 9, weight: .medium)
             label.textColor = Theme.green
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = Theme.monoFont(ofSize: 10)
+            name.font = Theme.monoFont(ofSize: 9)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.isBezeled = false; name.drawsBackground = false
             name.isEditable = false; name.isSelectable = false
@@ -267,21 +303,21 @@ class TabCard: NSView {
         case .error:
             let dot = NSView()
             dot.wantsLayer = true
-            dot.layer?.cornerRadius = 3
+            dot.layer?.cornerRadius = 2
             dot.layer?.backgroundColor = Theme.red.cgColor
             dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
             let exitLabel = "Failed (exit \(proc.exitCode ?? 1))"
             let label = NSTextField(labelWithString: exitLabel)
-            label.font = Theme.font(ofSize: 10)
+            label.font = Theme.font(ofSize: 9, weight: .medium)
             label.textColor = Theme.red
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
             let name = NSTextField(labelWithString: proc.name)
-            name.font = Theme.monoFont(ofSize: 10)
+            name.font = Theme.monoFont(ofSize: 9)
             name.textColor = NSColor(white: 1.0, alpha: 0.3)
             name.isBezeled = false; name.drawsBackground = false
             name.isEditable = false; name.isSelectable = false

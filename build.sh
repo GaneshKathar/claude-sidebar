@@ -2,6 +2,7 @@
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/ClaudeSidebar.app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 echo "Building Claude Sidebar..."
 swiftc -O -o "$APP/Contents/MacOS/ClaudeSidebar" \
     -framework AppKit \
