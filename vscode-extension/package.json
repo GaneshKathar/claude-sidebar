@@ -1,0 +1,11 @@
+{
+  "name": "claude-sidebar-focus",
+  "displayName": "Claude Manager Sidebar Focus",
+  "description": "Lets the Claude Manager sidebar app focus the right VS Code terminal by TTY",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {}
+}
