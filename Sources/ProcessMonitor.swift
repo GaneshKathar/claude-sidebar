@@ -105,6 +105,7 @@ class ProcessMonitor {
     struct ScanResult {
         var processes: [String: ProcessInfo] = [:]  // tty -> non-shell/non-claude process
         var claudeTTYs: Set<String> = []            // TTYs running claude
+        var claudePIDs: [String: Int32] = [:]       // tty -> claude PID (for kqueue watching)
         var shellPIDs: [String: Int32] = [:]        // tty -> shell PID (for CWD detection)
     }
 
@@ -181,6 +182,7 @@ class ProcessMonitor {
             // Detect Claude process
             if baseName == "claude" || args.lowercased().contains("/claude") {
                 result.claudeTTYs.insert(fullTTY)
+                result.claudePIDs[fullTTY] = Int32(pid)
                 continue
             }
 

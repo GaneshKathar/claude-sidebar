@@ -29,6 +29,12 @@ class SidebarController {
     private var expandedWindows: Set<Int> = []
     private let settingsController = SettingsWindowController()
 
+    // CWD-based grouping for non-repo slots (stable across scans)
+    private var cwdGroupWindowIds: [String: Int] = [:]   // groupKey -> stable windowId
+    private var cwdGroupLabels: [String: String] = [:]   // groupKey -> display label
+    private var cwdGroupNextId = -20001
+    private var cwdGroupNextLabel = 1
+
     // Timers
     private var fastTimer: Timer?
     private var slowTimer: Timer?
@@ -65,7 +71,7 @@ class SidebarController {
     private let headerView = FlippedView()
     private let footerView = FlippedView()
     private let logoView = NSView()
-    private let titleLabel = NSTextField(labelWithString: "iTerm Sidebar")
+    private let titleLabel = NSTextField(labelWithString: "Claude Manager")
 
     init() {
         window = NSPanel(
@@ -133,6 +139,7 @@ class SidebarController {
     }
 
     deinit {
+        snapWorkItem?.cancel()
         // Invalidate all timers
         fastTimer?.invalidate()
         slowTimer?.invalidate()
@@ -230,7 +237,7 @@ class SidebarController {
         logoView.frame = NSRect(x: 17, y: 8, width: 28, height: 28)
         headerView.addSubview(logoView)
 
-        let logoText = NSTextField(labelWithString: "iT")
+        let logoText = NSTextField(labelWithString: "C")
         logoText.font = Theme.font(ofSize: 13, weight: .semibold)
         logoText.textColor = .white
         logoText.alignment = .center
@@ -272,14 +279,8 @@ class SidebarController {
         footerBorder.autoresizingMask = [.width]
         footerView.addSubview(footerBorder)
 
-        let newWindowBtn = makeFooterButton(title: "+ New Window")
-        newWindowBtn.frame = NSRect(x: 8, y: 6, width: 130, height: 32)
-        newWindowBtn.target = self
-        newWindowBtn.action = #selector(newWindowTapped)
-        footerView.addSubview(newWindowBtn)
-
         let settingsBtn = makeFooterButton(title: "\u{2699} Settings")
-        settingsBtn.frame = NSRect(x: 146, y: 6, width: 130, height: 32)
+        settingsBtn.frame = NSRect(x: 8, y: 6, width: 130, height: 32)
         settingsBtn.target = self
         settingsBtn.action = #selector(settingsTapped)
         footerView.addSubview(settingsBtn)
@@ -296,10 +297,6 @@ class SidebarController {
         btn.font = Theme.font(ofSize: 11)
         btn.contentTintColor = NSColor(white: 1.0, alpha: 0.4)
         return btn
-    }
-
-    @objc private func newWindowTapped() {
-        scanner.createWindow()
     }
 
     @objc private func settingsTapped() {
@@ -657,11 +654,46 @@ class SidebarController {
     // MARK: - Start / Reload
 
     func start() {
-        window.orderFront(nil)
-        startTimers()
         startDarwinObserver()
-        fullPoll()
-        fastPoll()  // detect processes immediately, don't wait 5s
+
+        // Run full scan + process scan before showing the window so it
+        // appears already populated rather than flashing empty then filling in.
+        fullPollInFlight = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let initialWindows = self.scanner.scan()
+
+            // Also run the fast (process/CWD/branch) scan while we're on background
+            let ttys = initialWindows.flatMap { $0.tabs.map { $0.tty } }
+            let scanResult = ttys.isEmpty ? ProcessMonitor.ScanResult() : self.processMonitor.discoverProcesses(ttys: ttys)
+            let cwds = self.processMonitor.detectCWDs(shellPIDs: scanResult.shellPIDs)
+            var branches: [String: String] = [:]
+            for (tty, cwd) in cwds {
+                if let branch = self.scanner.getBranch(cwd: cwd) { branches[tty] = branch }
+            }
+
+            DispatchQueue.main.async {
+                // Apply full scan (sets fullPollInFlight = false via defer)
+                self.applyFullPollResults(initialWindows)
+
+                // Overlay process/CWD/branch data from fast scan
+                for wi in 0..<self.windows.count {
+                    for ti in 0..<self.windows[wi].tabs.count {
+                        let tty = self.windows[wi].tabs[ti].tty
+                        if let cwd = cwds[tty] { self.windows[wi].tabs[ti].cwd = cwd }
+                        if let branch = branches[tty] { self.windows[wi].tabs[ti].gitBranch = branch }
+                        if scanResult.claudeTTYs.contains(tty) {
+                            self.windows[wi].tabs[ti].hasClaude = true
+                        }
+                    }
+                }
+                self.updateUI()
+
+                // Now show the window — fully populated
+                self.window.orderFront(nil)
+                self.startTimers()
+            }
+        }
     }
 
     func reload() {
@@ -690,23 +722,29 @@ class SidebarController {
             self?.fullPoll()
         }
         windowWatchTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.checkITermWindowCount()
+            self?.checkTerminalWindowCounts()
         }
     }
 
-    private func checkITermWindowCount() {
-        let count = itermWindowCount()
+    private func checkTerminalWindowCounts() {
+        let count = terminalWindowCount()
         if count != lastITermWindowCount {
             lastITermWindowCount = count
             fullPoll()
         }
     }
 
-    private func itermWindowCount() -> Int {
-        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            return 0
-        }
-        return windowList.filter { ($0[kCGWindowOwnerName as String] as? String) == "iTerm2" }.count
+    // Count on-screen windows belonging to any supported terminal emulator.
+    // Uses CGWindowListCopyWindowInfo (~0.5ms) — safe to call on main thread every 1s.
+    private func terminalWindowCount() -> Int {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return 0 }
+
+        return windowList.filter { window in
+            guard let owner = window[kCGWindowOwnerName as String] as? String else { return false }
+            return ITermScanner.isKnownTerminal(owner.lowercased())
+        }.count
     }
 
     private func startDarwinObserver() {
@@ -735,12 +773,12 @@ class SidebarController {
 
         wsActivateObserver = ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.bundleIdentifier == "com.googlecode.iterm2" else { return }
+                  ITermScanner.isKnownTerminal((app.localizedName ?? "").lowercased()) else { return }
             self?.fullPoll()
         }
         wsDeactivateObserver = ws.addObserver(forName: NSWorkspace.didDeactivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.bundleIdentifier == "com.googlecode.iterm2" else { return }
+                  ITermScanner.isKnownTerminal((app.localizedName ?? "").lowercased()) else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.fullPoll() }
         }
     }
@@ -801,6 +839,18 @@ class SidebarController {
                             if self.windows[wi].tabs[ti].claudeState == .inactive {
                                 self.windows[wi].tabs[ti].claudeState = .idle
                             }
+                            // Watch this Claude PID — kqueue fires instantly when killed/crashed
+                            if let claudePID = scanResult.claudePIDs[tty],
+                               !self.watchedClaudePIDs.contains(claudePID) {
+                                self.watchedClaudePIDs.insert(claudePID)
+                                self.processMonitor.watchPID(claudePID, tty: tty) { [weak self] _ in
+                                    self?.handleClaudeExit(tty: tty, pid: claudePID)
+                                }
+                            }
+                        } else if self.windows[wi].tabs[ti].hasClaude {
+                            // Claude gone from ps — clear immediately regardless of state
+                            self.windows[wi].tabs[ti].hasClaude = false
+                            self.windows[wi].tabs[ti].claudeState = .inactive
                         }
 
                         // Update CWD from shell process
@@ -830,11 +880,20 @@ class SidebarController {
         }
     }
 
+    private var watchedClaudePIDs: Set<Int32> = []
     private var fullPollInFlight = false
     private var pendingInstantUpdate = false
     private func fullPoll() {
         guard !fullPollInFlight else { return }
         fullPollInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let newWindows = self.scanner.scan()
+            DispatchQueue.main.async { self.applyFullPollResults(newWindows) }
+        }
+    }
+
+    private func applyFullPollResults(_ newWindows: [ITermWindowInfo]) {
         defer {
             fullPollInFlight = false
             if pendingInstantUpdate {
@@ -842,8 +901,6 @@ class SidebarController {
                 instantUpdate()
             }
         }
-
-        let newWindows = scanner.scan()
 
         if !newWindows.isEmpty {
             var merged = newWindows
@@ -879,6 +936,19 @@ class SidebarController {
         updateUI()
     }
 
+    private func handleClaudeExit(tty: String, pid: Int32) {
+        watchedClaudePIDs.remove(pid)
+        for wi in 0..<windows.count {
+            for ti in 0..<windows[wi].tabs.count {
+                if windows[wi].tabs[ti].tty == tty {
+                    windows[wi].tabs[ti].hasClaude = false
+                    windows[wi].tabs[ti].claudeState = .inactive
+                }
+            }
+        }
+        updateUI()
+    }
+
     private func handleProcessExit(tty: String, exitCode: Int32) {
         for wi in 0..<windows.count {
             for ti in 0..<windows[wi].tabs.count {
@@ -890,27 +960,120 @@ class SidebarController {
         updateUI()
     }
 
-    // MARK: - Slot Building (always show all configured repos)
+    // MARK: - Slot Building (repo-aggregated + CWD-grouped)
+
+    // Walk up from cwd to find the nearest .git directory (project root)
+    private func gitRoot(for cwd: String) -> String? {
+        var path = cwd
+        let fm = FileManager.default
+        for _ in 0..<20 {
+            if fm.fileExists(atPath: path + "/.git") { return path }
+            let parent = (path as NSString).deletingLastPathComponent
+            if parent == path { break }  // reached filesystem root
+            path = parent
+        }
+        return nil
+    }
+
+    private func shortPath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
 
     private func buildSlots() -> [ITermWindowInfo] {
         var slots: [ITermWindowInfo] = []
+        var claimedTTYs = Set<String>()
 
-        // Repo slots first — one per configured repo, in config order
+        // Flatten all tabs from all scanned windows
+        let allTabs = windows.flatMap { $0.tabs }
+
+        // 1. Repo slots: collect ALL tabs (from any terminal) whose CWD is under each repo path
         for repo in appConfig.repos {
-            if let win = windows.first(where: { $0.matchedRepoNum == repo.num }) {
-                slots.append(win)
+            let repoPath = repo.expandedPath
+            let repoTabs = allTabs.filter { tab in
+                guard let cwd = tab.cwd else { return false }
+                return cwd == repoPath || cwd.hasPrefix(repoPath + "/")
+            }
+
+            if repoTabs.isEmpty {
+                slots.append(.placeholder(for: repo))
             } else {
-                slots.append(ITermWindowInfo.placeholder(for: repo))
+                repoTabs.forEach { claimedTTYs.insert($0.tty) }
+                // Re-index tabs so tabIndex is contiguous
+                let indexedTabs = repoTabs.enumerated().map { idx, t -> ITermTabInfo in
+                    var tab = t; tab.tabIndex = idx; return tab
+                }
+                slots.append(ITermWindowInfo(
+                    windowId: -repo.num,             // stable ID reusing placeholder ID
+                    windowName: shortPath(repoPath),
+                    displayLabel: repo.displayLabel,
+                    tabs: indexedTabs,
+                    matchedRepoNum: repo.num
+                ))
             }
         }
 
-        // Non-repo windows after repos, sorted numerically by label for stable position
-        let claimedIds = Set(slots.map { $0.windowId })
-        let nonRepoWindows = windows.filter { !claimedIds.contains($0.windowId) }
-            .sorted { (Int($0.displayLabel) ?? 0) < (Int($1.displayLabel) ?? 0) }
-        for win in nonRepoWindows {
-            slots.append(win)
+        // 2. Non-repo tabs: group by git root (or exact CWD if no git root)
+        let remaining = allTabs.filter { !claimedTTYs.contains($0.tty) }
+
+        var cwdGroups: [String: [ITermTabInfo]] = [:]
+        var unknownByWindow: [Int: [ITermTabInfo]] = [:]
+
+        for tab in remaining {
+            if let cwd = tab.cwd {
+                let key = gitRoot(for: cwd) ?? cwd
+                cwdGroups[key, default: []].append(tab)
+            } else {
+                unknownByWindow[tab.windowId, default: []].append(tab)
+            }
         }
+
+        // CWD groups sorted by path for stable order
+        for (key, tabs) in cwdGroups.sorted(by: { $0.key < $1.key }) {
+            if cwdGroupWindowIds[key] == nil {
+                cwdGroupWindowIds[key] = cwdGroupNextId
+                cwdGroupNextId -= 1
+            }
+            if cwdGroupLabels[key] == nil {
+                cwdGroupLabels[key] = "\(cwdGroupNextLabel)"
+                cwdGroupNextLabel += 1
+            }
+            let windowId = cwdGroupWindowIds[key]!
+            let label = cwdGroupLabels[key]!
+
+            let indexedTabs = tabs.sorted { $0.tabIndex < $1.tabIndex }.enumerated().map { idx, t -> ITermTabInfo in
+                var tab = t; tab.tabIndex = idx; return tab
+            }
+            slots.append(ITermWindowInfo(
+                windowId: windowId,
+                windowName: shortPath(key),
+                displayLabel: label,
+                tabs: indexedTabs
+            ))
+            tabs.forEach { claimedTTYs.insert($0.tty) }
+        }
+
+        // Tabs with unknown CWD: fall back to original window grouping
+        for (wid, tabs) in unknownByWindow.sorted(by: { $0.key < $1.key }) {
+            let origWindow = windows.first(where: { $0.windowId == wid })
+            let label: String
+            if let orig = origWindow {
+                label = orig.displayLabel
+            } else {
+                label = "\(cwdGroupNextLabel)"
+                cwdGroupNextLabel += 1
+            }
+            let indexedTabs = tabs.sorted { $0.tabIndex < $1.tabIndex }.enumerated().map { idx, t -> ITermTabInfo in
+                var tab = t; tab.tabIndex = idx; return tab
+            }
+            slots.append(ITermWindowInfo(
+                windowId: wid,
+                windowName: origWindow?.windowName ?? "Terminal",
+                displayLabel: label,
+                tabs: indexedTabs
+            ))
+        }
+
         return slots
     }
 
@@ -939,6 +1102,22 @@ class SidebarController {
                 btn.isMinimalMode = isMinimal
                 btn.update(windowInfo: win)
                 btn.isExpanded = isMinimal ? false : isSidebarExpanded
+                // Repo slots reuse -repo.num for both placeholder and active states.
+                // Set missing callbacks when a placeholder button gains real tabs.
+                if btn.onFocusTab == nil {
+                    btn.onFocusTab = { [weak self] tab in
+                        self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
+                    }
+                }
+                if btn.onFocusHighPriorityTab == nil {
+                    btn.onFocusHighPriorityTab = { [weak self, weak btn] in
+                        let tab = btn?.windowInfo.tabs.max(by: { $0.state < $1.state })
+                                     ?? btn?.windowInfo.tabs.first
+                        if let tab = tab {
+                            self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
+                        }
+                    }
+                }
             } else {
                 let btn = WindowButton(windowInfo: win)
                 btn.isMinimalMode = isMinimal
@@ -946,24 +1125,12 @@ class SidebarController {
                 btn.onToggle = { [weak self] in
                     self?.toggleWindow(win.windowId)
                 }
-                btn.onNewTab = { [weak self] in
-                    self?.scanner.createTab(windowId: win.windowId)
-                }
                 btn.onFocusTab = { [weak self] tab in
                     self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
                 }
-                // Wire open repo for placeholder windows
-                if win.isPlaceholder, let repo = appConfig.repos.first(where: { $0.num == win.matchedRepoNum }) {
-                    btn.onOpenRepo = { [weak self] in
-                        self?.scanner.openWindowWithCWD(
-                            path: repo.expandedPath,
-                            autoStartClaude: appConfig.autoStartClaude ?? false
-                        )
-                    }
-                }
-                // Wire focus highest-priority tab for minimal mode
-                btn.onFocusHighPriorityTab = { [weak self] in
-                    let tab = win.tabs.max(by: { $0.state < $1.state }) ?? win.tabs.first
+                btn.onFocusHighPriorityTab = { [weak self, weak btn] in
+                    let tab = btn?.windowInfo.tabs.max(by: { $0.state < $1.state })
+                                 ?? btn?.windowInfo.tabs.first
                     if let tab = tab {
                         self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
                     }

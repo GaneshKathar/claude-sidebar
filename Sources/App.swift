@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import os.log
 
 private let logger = OSLog(subsystem: "com.claudesidebar", category: "App")
@@ -34,6 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             os_log("Failed to create state directory: %{public}@", log: logger, type: .error, error.localizedDescription)
         }
+
+        // Accessibility is only needed for the generic window-title fallback (focusGenericWindow).
+        // cmux, VS Code, and iTerm2 all have dedicated focus paths that don't require it.
+        // Don't prompt at launch — let macOS ask on demand if that path is ever reached.
 
         // Setup status bar icon
         statusBar.onOpenSettings = { [weak self] in

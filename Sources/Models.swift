@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import os.log
+
+private let configLogger = OSLog(subsystem: "com.claudesidebar", category: "AppConfig")
 
 // MARK: - Config
 
@@ -29,6 +32,10 @@ struct AppConfig: Codable {
     var fontScale: Double? = 1.0
     var minimalView: Bool? = false
     var autoStartClaude: Bool? = false
+    var colorIdle: String?
+    var colorWorking: String?
+    var colorAlert: String?
+    var colorRunning: String?
 
     // Resolve install dir from the app bundle's location
     // e.g. /Users/foo/rubrik/claude-sidebar/ClaudeSidebar.app -> /Users/foo/rubrik/claude-sidebar
@@ -66,8 +73,11 @@ struct AppConfig: Codable {
         try? fm.createDirectory(atPath: AppConfig.installDir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(self) {
-            fm.createFile(atPath: AppConfig.configPath, contents: data)
+        guard let data = try? encoder.encode(self) else { return }
+        do {
+            try data.write(to: URL(fileURLWithPath: AppConfig.configPath), options: .atomic)
+        } catch {
+            os_log("Failed to save config: %{public}@", log: configLogger, type: .error, error.localizedDescription)
         }
     }
 
@@ -136,10 +146,22 @@ struct HookState: Codable {
     let timestamp: Double
 }
 
+// Written by sidebar-state.sh at SessionStart — terminal identity for window focusing.
+// Persists after claude exits so the sidebar can always focus the right window.
+struct TerminalFocus: Codable {
+    let tty: String
+    let term_program: String?       // TERM_PROGRAM: "iTerm.app", "vscode", "ghostty", etc.
+    let iterm_session_id: String?   // iTerm2 session UUID (extracted from ITERM_SESSION_ID)
+    let cmux_workspace_id: String?  // CMUX_WORKSPACE_ID
+    let cmux_socket_path: String?   // CMUX_SOCKET_PATH
+    let timestamp: Double
+}
+
 struct HookStates {
-    var byRepo: [Int: String] = [:]       // repo num -> highest priority state
-    var byTTY: [String: String] = [:]     // tty path -> state (per-session)
-    var byTTYRepo: [String: Int] = [:]    // tty path -> repo num (for session matching)
+    var byRepo: [Int: String] = [:]            // repo num -> highest priority state
+    var byTTY: [String: String] = [:]          // tty path -> state (most recent session)
+    var byTTYRepo: [String: Int] = [:]         // tty path -> repo num (for session matching)
+    var byTTYTimestamp: [String: Double] = [:] // tty path -> timestamp (for recency tracking)
 }
 
 // MARK: - Session State (renamed from RepoState)
@@ -228,6 +250,7 @@ struct ITermTabInfo {
     var hasClaude: Bool
     var claudeState: SessionState
     var processInfo: ProcessInfo?
+    var appName: String?   // terminal app display name, set at scan time
 
     // Overall tab state: Claude state takes priority, then process state
     var state: SessionState {

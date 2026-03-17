@@ -1,5 +1,6 @@
 import AppKit
 
+
 // MARK: - Tab Card
 
 class TabCard: NSView {
@@ -9,7 +10,7 @@ class TabCard: NSView {
     private var isHovered = false
     private let borderView = NSView()
 
-    init(tab: ITermTabInfo) {
+    init(tab: ITermTabInfo, appName: String? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 6
@@ -36,7 +37,7 @@ class TabCard: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        // Row 1: CWD + focus button
+        // Row 1: CWD (left, expands) + app name (right, dim, replaces the old ⌘ icon)
         let row1 = NSStackView()
         row1.orientation = .horizontal
         row1.spacing = 4
@@ -52,27 +53,28 @@ class TabCard: NSView {
         cwdLabel.isEditable = false
         cwdLabel.isSelectable = false
         if let cwd = tab.cwd {
-            // Shorten home directory
             let home = NSHomeDirectory()
             cwdLabel.stringValue = cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
         } else {
-            // Don't show raw session name — just show "Tab N"
             cwdLabel.stringValue = "Tab \(tab.tabIndex)"
             cwdLabel.textColor = NSColor(white: 1.0, alpha: 0.3)
         }
+        cwdLabel.allowsExpansionToolTips = false
         cwdLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         cwdLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row1.addArrangedSubview(cwdLabel)
 
-        let focusBtn = NSTextField(labelWithString: "\u{2318}")
-        focusBtn.font = Theme.font(ofSize: 9)
-        focusBtn.textColor = NSColor(white: 1.0, alpha: 0.15)
-        focusBtn.isBezeled = false
-        focusBtn.drawsBackground = false
-        focusBtn.isEditable = false
-        focusBtn.isSelectable = false
-        focusBtn.setContentHuggingPriority(.required, for: .horizontal)
-        row1.addArrangedSubview(focusBtn)
+        if let appName = appName, !appName.isEmpty {
+            let appLabel = NSTextField(labelWithString: appName)
+            appLabel.font = Theme.font(ofSize: 8.5)
+            appLabel.textColor = NSColor(white: 1.0, alpha: 0.28)
+            appLabel.isBezeled = false
+            appLabel.drawsBackground = false
+            appLabel.isEditable = false
+            appLabel.isSelectable = false
+            appLabel.setContentHuggingPriority(.required, for: .horizontal)
+            row1.addArrangedSubview(appLabel)
+        }
 
         stack.addArrangedSubview(row1)
 

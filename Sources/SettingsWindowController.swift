@@ -20,6 +20,9 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     private var hookStatusLabel: NSTextField!
     private var installHooksButton: NSButton!
     private var isFirstTime = false
+    // Color settings — indexed: 0=idle, 1=working, 2=alert, 3=running
+    private var colorWells: [NSColorWell] = []
+    private var hexFields: [NSTextField] = []
 
     var onSave: ((AppConfig) -> Void)?
 
@@ -35,8 +38,11 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         // Load current config into editable list
         repoList = appConfig.repos.map { (num: $0.num, path: $0.path, label: $0.label) }
 
+        colorWells = []
+        hexFields = []
+
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 792),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -53,7 +59,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         contentView.autoresizingMask = [.width, .height]
         win.contentView = contentView
 
-        var yOffset: CGFloat = 600
+        var yOffset: CGFloat = 752
 
         // === First-time banner ===
         if firstTime {
@@ -233,7 +239,44 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         autoStartClaudeCheckbox.frame = NSRect(x: 20, y: yOffset, width: 300, height: 20)
         contentView.addSubview(autoStartClaudeCheckbox)
 
-        // === Section C: Claude Hooks ===
+        // === Section C: Status Colors ===
+        yOffset -= 40
+        let colorHeader = makeLabel("Status Colors", bold: true)
+        colorHeader.frame = NSRect(x: 20, y: yOffset, width: 200, height: 20)
+        contentView.addSubview(colorHeader)
+
+        let colorDefs: [(label: String, color: NSColor)] = [
+            ("Idle",    Theme.green),
+            ("Working", Theme.blue),
+            ("Alert",   Theme.red),
+            ("Running", Theme.yellow),
+        ]
+        for (idx, def) in colorDefs.enumerated() {
+            yOffset -= 28
+            let lbl = makeLabel("\(def.label):")
+            lbl.frame = NSRect(x: 20, y: yOffset, width: 110, height: 22)
+            contentView.addSubview(lbl)
+
+            let well = NSColorWell()
+            well.color = def.color
+            well.frame = NSRect(x: 140, y: yOffset, width: 44, height: 22)
+            well.target = self
+            well.action = #selector(colorWellChanged(_:))
+            well.tag = idx
+            contentView.addSubview(well)
+            colorWells.append(well)
+
+            let hexField = NSTextField(string: def.color.hexString)
+            hexField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            hexField.frame = NSRect(x: 194, y: yOffset, width: 90, height: 22)
+            hexField.placeholderString = "#rrggbb"
+            hexField.delegate = self
+            hexField.tag = 100 + idx
+            contentView.addSubview(hexField)
+            hexFields.append(hexField)
+        }
+
+        // === Section D: Claude Hooks ===
         yOffset -= 40
         let hookHeader = makeLabel("Claude Hooks", bold: true)
         hookHeader.frame = NSRect(x: 20, y: yOffset, width: 200, height: 20)
@@ -338,6 +381,16 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let textField = obj.object as? NSTextField else { return }
         let row = textField.tag
+
+        // Tags 100–103 are hex color fields
+        if row >= 100 && row < 104 {
+            let idx = row - 100
+            if let color = NSColor(hexString: textField.stringValue), idx < colorWells.count {
+                colorWells[idx].color = color
+            }
+            return
+        }
+
         guard row < repoList.count else { return }
 
         var text = textField.stringValue
@@ -447,6 +500,12 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         tableView.reloadData()
     }
 
+    @objc private func colorWellChanged(_ sender: NSColorWell) {
+        let idx = sender.tag
+        guard idx < hexFields.count else { return }
+        hexFields[idx].stringValue = sender.color.hexString
+    }
+
     @objc private func stepperChanged(_ sender: NSStepper) {
         if sender === pollIntervalStepper {
             pollIntervalLabel.stringValue = "\(Int(sender.doubleValue))"
@@ -489,7 +548,11 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             launchAtLogin: launchAtLoginCheckbox.state == .on,
             fontScale: fontScaleStepper.doubleValue,
             minimalView: minimalViewCheckbox.state == .on,
-            autoStartClaude: autoStartClaudeCheckbox.state == .on
+            autoStartClaude: autoStartClaudeCheckbox.state == .on,
+            colorIdle:    colorWells.count > 0 ? colorWells[0].color.hexString : nil,
+            colorWorking: colorWells.count > 1 ? colorWells[1].color.hexString : nil,
+            colorAlert:   colorWells.count > 2 ? colorWells[2].color.hexString : nil,
+            colorRunning: colorWells.count > 3 ? colorWells[3].color.hexString : nil
         )
         newConfig.save()
         isFirstTime = false

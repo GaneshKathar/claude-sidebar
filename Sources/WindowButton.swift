@@ -1,5 +1,6 @@
 import AppKit
 
+
 // MARK: - Window Button (collapsed + expanded)
 
 class WindowButton: NSView {
@@ -7,13 +8,12 @@ class WindowButton: NSView {
     var isExpanded: Bool = false { didSet { if oldValue != isExpanded { rebuildUI() } } }
     var isMinimalMode: Bool = false
     var onToggle: (() -> Void)?
-    var onNewTab: (() -> Void)?
     var onFocusTab: ((ITermTabInfo) -> Void)?
-    var onOpenRepo: (() -> Void)?
     var onFocusHighPriorityTab: (() -> Void)?
 
     private var trackingArea: NSTrackingArea?
     private var isHovered = false
+    private var lastRenderFingerprint: String = ""
 
     init(windowInfo: ITermWindowInfo) {
         self.windowInfo = windowInfo
@@ -25,12 +25,24 @@ class WindowButton: NSView {
 
     required init?(coder: NSCoder) { nil }
 
+    private func makeFingerprint() -> String {
+        let tabsKey = windowInfo.tabs.map { t in
+            let proc = t.processInfo.map { "\($0.pid):\($0.exitCode.map(String.init) ?? "r")" } ?? ""
+            return "\(t.tty):\(t.state.rawValue):\(proc):\(t.cwd ?? ""):\(t.gitBranch ?? ""):\(t.appName ?? "")"
+        }.joined(separator: "|")
+        return "\(windowInfo.windowId):\(windowInfo.isPlaceholder):\(windowInfo.displayLabel):\(isExpanded):\(isMinimalMode):\(tabsKey)"
+    }
+
     func update(windowInfo: ITermWindowInfo) {
         self.windowInfo = windowInfo
+        let fp = makeFingerprint()
+        guard fp != lastRenderFingerprint else { return }
+        lastRenderFingerprint = fp
         rebuildUI()
     }
 
     private func rebuildUI() {
+        lastRenderFingerprint = makeFingerprint()
         subviews.forEach { $0.removeFromSuperview() }
 
         if windowInfo.isPlaceholder {
@@ -141,26 +153,7 @@ class WindowButton: NSView {
         stack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        // Hint
-        let hint = NSTextField(labelWithString: "Click to open")
-        hint.font = Theme.font(ofSize: 10)
-        hint.textColor = NSColor(white: 1.0, alpha: 0.2)
-        hint.isBezeled = false
-        hint.drawsBackground = false
-        hint.isEditable = false
-        hint.isSelectable = false
-
-        let hintWrapper = NSView()
-        hintWrapper.translatesAutoresizingMaskIntoConstraints = false
-        hintWrapper.addSubview(hint)
-        hint.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hint.leadingAnchor.constraint(equalTo: hintWrapper.leadingAnchor, constant: 36),
-            hint.topAnchor.constraint(equalTo: hintWrapper.topAnchor),
-            hint.bottomAnchor.constraint(equalTo: hintWrapper.bottomAnchor),
-        ])
-        stack.addArrangedSubview(hintWrapper)
-        hintWrapper.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // No action hint — placeholder slots are display-only
 
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
@@ -461,9 +454,9 @@ class WindowButton: NSView {
         stack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        // Tab cards
+        // Tab cards — use per-tab appName stamped at scan time (survives slot aggregation)
         for tab in windowInfo.tabs {
-            let card = TabCard(tab: tab)
+            let card = TabCard(tab: tab, appName: tab.appName)
             card.translatesAutoresizingMaskIntoConstraints = false
             card.onFocus = { [weak self] in self?.onFocusTab?(tab) }
 
@@ -512,9 +505,9 @@ class WindowButton: NSView {
 
     private func badgeBackground(_ state: SessionState) -> NSColor {
         switch state {
-        case .working: return NSColor(red: 96/255, green: 165/255, blue: 250/255, alpha: 0.10)
-        case .alert: return NSColor(red: 248/255, green: 113/255, blue: 113/255, alpha: 0.10)
-        case .idle: return NSColor(red: 74/255, green: 222/255, blue: 128/255, alpha: 0.10)
+        case .working: return Theme.blue.withAlphaComponent(0.15)
+        case .alert:   return Theme.red.withAlphaComponent(0.15)
+        case .idle:    return Theme.green.withAlphaComponent(0.15)
         case .inactive: return NSColor(white: 1.0, alpha: 0.05)
         }
     }
@@ -549,7 +542,7 @@ class WindowButton: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if windowInfo.isPlaceholder {
-            onOpenRepo?()
+            return  // placeholder slots are display-only — no terminal to open
         } else if isMinimalMode {
             onFocusHighPriorityTab?()
         } else {

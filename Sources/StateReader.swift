@@ -6,12 +6,32 @@ private let logger = OSLog(subsystem: "com.claudesidebar", category: "StateReade
 class StateReader {
     private let stateDir = "/tmp/claude-sidebar"
 
+    // Read terminal focus files written by the hook at SessionStart.
+    func readFocusFiles() -> [String: TerminalFocus] {
+        var result: [String: TerminalFocus] = [:]
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: stateDir) else { return result }
+        for file in files where file.hasPrefix("focus") && file.hasSuffix(".json") {
+            let path = "\(stateDir)/\(file)"
+            guard let data = fm.contents(atPath: path),
+                  let focus = try? JSONDecoder().decode(TerminalFocus.self, from: data),
+                  !focus.tty.isEmpty else { continue }
+            // Clean up stale entries (older than 24h — TTY was recycled)
+            if Date().timeIntervalSince1970 - focus.timestamp > 86400 {
+                try? fm.removeItem(atPath: path)
+                continue
+            }
+            result[focus.tty] = focus
+        }
+        return result
+    }
+
     func readStates() -> HookStates {
         var result = HookStates()
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: stateDir) else { return result }
 
-        for file in files where file.hasSuffix(".json") {
+        for file in files where file.hasSuffix(".json") && !file.hasPrefix("focus") {
             let path = "\(stateDir)/\(file)"
             guard let data = fm.contents(atPath: path) else {
                 os_log("Failed to read state file: %{public}@", log: logger, type: .error, file)
@@ -32,11 +52,17 @@ class StateReader {
             let repo = hookState.repo
             let state = hookState.state
 
-            // Per-TTY state and repo mapping for individual session matching
+            // Per-TTY state: keep only the most recent session's state per TTY.
+            // Multiple sessions can share a TTY (e.g. user ran claude twice); only the
+            // latest timestamp reflects the current session.
             if let tty = hookState.tty, !tty.isEmpty {
-                result.byTTY[tty] = state
-                if repo > 0 {
-                    result.byTTYRepo[tty] = repo
+                let existing = result.byTTYTimestamp[tty] ?? 0
+                if hookState.timestamp > existing {
+                    result.byTTY[tty] = state
+                    result.byTTYTimestamp[tty] = hookState.timestamp
+                    if repo > 0 {
+                        result.byTTYRepo[tty] = repo
+                    }
                 }
             }
 
