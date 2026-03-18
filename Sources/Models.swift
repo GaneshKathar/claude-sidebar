@@ -33,6 +33,8 @@ struct AppConfig: Codable {
     var fontScale: Double? = 1.0
     var minimalView: Bool? = false
     var autoStartClaude: Bool? = false
+    var openCommand: String?
+    var showAllITermWindows: Bool? = false
     var colorIdle: String?
     var colorWorking: String?
     var colorAlert: String?
@@ -252,6 +254,7 @@ struct ITermTabInfo {
     var claudeState: SessionState
     var processInfo: ProcessInfo?
     var appName: String?   // terminal app display name, set at scan time
+    var alwaysShow: Bool = false  // true for iTerm tabs when showAllITermWindows is on
 
     // Overall tab state: Claude state takes priority, then process state
     var state: SessionState {
@@ -265,12 +268,14 @@ struct ITermTabInfo {
             case .success: return .idle
             }
         }
-        return hasClaude ? .idle : .inactive
+        if hasClaude { return .idle }
+        if alwaysShow { return .idle }
+        return .inactive
     }
 
     // Whether this tab has any interesting activity (Claude or process)
     var hasActivity: Bool {
-        hasClaude || processInfo != nil
+        hasClaude || processInfo != nil || alwaysShow
     }
 }
 

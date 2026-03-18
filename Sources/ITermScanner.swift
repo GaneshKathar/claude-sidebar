@@ -60,11 +60,14 @@ class ITermScanner {
         let hookStates = stateReader.readStates()
         terminalFocusByTTY = stateReader.readFocusFiles()   // terminal identity per TTY
 
-        let itermWindows = queryITerm(hookStates: hookStates)
+        // Run ps scan once and share across iTerm + generic terminal scanners
+        let psInfo = scanAllClaudeProcesses()
+
+        let itermWindows = queryITerm(hookStates: hookStates, psInfo: psInfo)
 
         // Add sessions from other terminals not already tracked by iTerm
         let itermTTYs = Set(itermWindows.flatMap { $0.tabs.map { $0.tty } })
-        let genericWindows = scanGenericTerminals(excludeTTYs: itermTTYs, hookStates: hookStates)
+        let genericWindows = scanGenericTerminals(excludeTTYs: itermTTYs, hookStates: hookStates, psInfo: psInfo)
 
         // Resolve CWD and branch for all tabs
         var windows = itermWindows + genericWindows
@@ -107,6 +110,7 @@ class ITermScanner {
 
     private struct GenericScanResult {
         var claudeTTYs: Set<String> = []
+        var busyTTYs: Set<String> = []      // TTYs with a non-shell, non-Claude foreground process
         var shellPIDs: [String: Int32] = [:]
         var pidToPPID: [Int32: Int32] = [:]
         var pidToComm: [Int32: String] = [:]
@@ -152,10 +156,16 @@ class ITermScanner {
 
             if baseName == "claude" {
                 result.claudeTTYs.insert(fullTTY)
-            } else if ["zsh", "bash", "fish", "sh"].contains(baseName) {
-                if result.shellPIDs[fullTTY] == nil {
+            } else if ["zsh", "bash", "fish", "sh", "csh", "tcsh", "dash", "ksh",
+                       "login"].contains(baseName) {
+                // shells and login (always present as parent of shell on macOS) are not "busy"
+                if ["zsh", "bash", "fish", "sh", "csh", "tcsh", "dash", "ksh"].contains(baseName),
+                   result.shellPIDs[fullTTY] == nil {
                     result.shellPIDs[fullTTY] = pid
                 }
+            } else {
+                // Non-shell, non-login, non-Claude process on a real TTY → terminal is busy
+                result.busyTTYs.insert(fullTTY)
             }
         }
         return result
@@ -338,9 +348,7 @@ class ITermScanner {
     }
 
     // Find Claude sessions in terminals other than iTerm, return as virtual windows
-    private func scanGenericTerminals(excludeTTYs: Set<String>, hookStates: HookStates) -> [ITermWindowInfo] {
-        // ps scan first — needed for both Claude detection and terminal liveness check
-        let psInfo = scanAllClaudeProcesses()
+    private func scanGenericTerminals(excludeTTYs: Set<String>, hookStates: HookStates, psInfo: GenericScanResult) -> [ITermWindowInfo] {
 
         // ps-detected Claude processes are always valid (process is running right now)
         var candidateTTYs = psInfo.claudeTTYs.subtracting(excludeTTYs)
@@ -456,7 +464,7 @@ class ITermScanner {
         }
     }
 
-    private func queryITerm(hookStates: HookStates) -> [ITermWindowInfo] {
+    private func queryITerm(hookStates: HookStates, psInfo: GenericScanResult) -> [ITermWindowInfo] {
         // Use NSWorkspace instead of System Events to check for iTerm2 — no Automation prompt needed
         let iTerm2Running = NSWorkspace.shared.runningApplications
             .contains { $0.bundleIdentifier == "com.googlecode.iterm2" }
@@ -507,7 +515,8 @@ class ITermScanner {
             let name = parts[4]
             let tty = parts[5]
 
-            // Detect Claude: hook state (reliable) or title hint (refined by ps scan later)
+            // Detect Claude: hook state (reliable — written at SessionStart, persists through session)
+            // or title hint as fallback for brand-new sessions before first hook fires.
             let hasClaude = hookStates.byTTY[tty] != nil || isClaudeInTitle(name)
 
             var claudeState: SessionState = .inactive
@@ -578,12 +587,23 @@ class ITermScanner {
             windowMap[wid] = win
         }
 
-        // Only return windows that have at least one Claude session — consistent with
-        // generic terminal behaviour (Ghostty/VS Code are also Claude-only).
+        let showAll = appConfig.showAllITermWindows ?? false
+
         return windowOrder.compactMap { wid -> ITermWindowInfo? in
             guard var win = windowMap[wid] else { return nil }
-            win.tabs = win.tabs.filter { $0.hasClaude }
-            return win.tabs.isEmpty ? nil : win
+            if showAll {
+                // Keep ALL tabs visible (alwaysShow = true).
+                // Real process detection is handled by fastPoll via ProcessMonitor.
+                win.tabs = win.tabs.map { tab -> ITermTabInfo in
+                    var t = tab
+                    t.alwaysShow = true
+                    return t
+                }
+                return win.tabs.isEmpty ? nil : win
+            } else {
+                win.tabs = win.tabs.filter { $0.hasClaude }
+                return win.tabs.isEmpty ? nil : win
+            }
         }
     }
 
@@ -920,10 +940,11 @@ class ITermScanner {
         }
     }
 
-    func openWindowWithCWD(path: String, autoStartClaude: Bool = false) {
+    func openWindowWithCWD(path: String, command: String? = nil) {
         let escapedPath = escapeForAppleScript(path)
         let cdCommand = "cd \\\"\(escapedPath)\\\""
-        let fullCommand = autoStartClaude ? "\(cdCommand) && claude" : cdCommand
+        let resolvedCommand = command ?? (appConfig.openCommand ?? ((appConfig.autoStartClaude ?? false) ? "claude" : nil))
+        let fullCommand = resolvedCommand.flatMap { $0.isEmpty ? nil : $0 }.map { "\(cdCommand) && \($0)" } ?? cdCommand
         let script = """
         tell application "iTerm2"
             activate

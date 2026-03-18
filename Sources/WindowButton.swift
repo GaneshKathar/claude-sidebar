@@ -23,6 +23,7 @@ class WindowButton: NSView {
     var onToggle: (() -> Void)?
     var onFocusTab: ((ITermTabInfo) -> Void)?
     var onFocusHighPriorityTab: (() -> Void)?
+    var onOpenNewWindow: (() -> Void)?
 
     private var trackingArea: NSTrackingArea?
     private var isHovered = false
@@ -40,7 +41,7 @@ class WindowButton: NSView {
 
     private func makeFingerprint() -> String {
         let tabsKey = windowInfo.tabs.map { t in
-            let proc = t.processInfo.map { "\($0.pid):\($0.exitCode.map(String.init) ?? "r")" } ?? ""
+            let proc = t.processInfo.map { "\($0.pid):\($0.exitCode.map(String.init) ?? "r"):\($0.durationString)" } ?? ""
             return "\(t.tty):\(t.state.rawValue):\(proc):\(t.cwd ?? ""):\(t.gitBranch ?? ""):\(t.appName ?? "")"
         }.joined(separator: "|")
         return "\(windowInfo.windowId):\(windowInfo.isPlaceholder):\(windowInfo.windowName):\(windowInfo.displayPath ?? ""):\(windowInfo.displayLabel):\(isExpanded):\(isMinimalMode):\(tabsKey)"
@@ -550,6 +551,9 @@ class WindowButton: NSView {
             case .error:   return Theme.red
             }
         }
+        if tab.alwaysShow {
+            return NSColor(white: 1.0, alpha: 0.25)
+        }
         return NSColor(white: 1.0, alpha: 0.1)
     }
 
@@ -592,7 +596,8 @@ class WindowButton: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if windowInfo.isPlaceholder {
-            return  // placeholder slots are display-only — no terminal to open
+            onOpenNewWindow?()
+            return
         } else if isMinimalMode {
             onFocusHighPriorityTab?()
         } else {

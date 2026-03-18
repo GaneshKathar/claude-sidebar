@@ -126,16 +126,25 @@ class ProcessMonitor {
         "sourcekit-lsp", "uv",
     ]
 
-    // Batched process discovery: single ps call, filter by known TTYs
-    // Uses `args` for full command display (e.g. "make build" instead of "make")
+    // Candidate foreground process (collected before resolving root command)
+    private struct FGCandidate {
+        let pid: Int
+        let ppid: Int
+        let args: String
+        let baseName: String
+        let startTime: Date
+    }
+
+    // Batched process discovery: single ps call, filter by known TTYs.
+    // Resolves the root user command (direct child of shell) instead of the deepest subprocess.
     func discoverProcesses(ttys: [String]) -> ScanResult {
         guard !ttys.isEmpty else { return ScanResult() }
 
         let pipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        // pid, tty, etime for timing, stat for state (foreground detection), args for full command
-        process.arguments = ["-eo", "pid,tty,etime,stat,args"]
+        // ppid added for root-command resolution
+        process.arguments = ["-eo", "pid,ppid,tty,etime,stat,args"]
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         do {
@@ -158,21 +167,25 @@ class ProcessMonitor {
         }
 
         var result = ScanResult()
+        var fgCandidates: [String: [FGCandidate]] = [:]  // tty -> foreground processes
+
         let lines = output.components(separatedBy: "\n")
         for line in lines.dropFirst() {  // skip header
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
-            // Split: pid tty etime stat args...
-            let parts = trimmed.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
-            guard parts.count >= 5 else { continue }
+            // Split: pid ppid tty etime stat args...
+            let parts = trimmed.split(separator: " ", maxSplits: 5, omittingEmptySubsequences: true)
+            guard parts.count >= 6 else { continue }
 
             let pidStr = String(parts[0])
-            let ttyShort = String(parts[1])
-            let etime = String(parts[2])
-            let stat = String(parts[3])
-            let args = String(parts[4])
+            let ppidStr = String(parts[1])
+            let ttyShort = String(parts[2])
+            let etime = String(parts[3])
+            let stat = String(parts[4])
+            let args = String(parts[5])
 
             guard let pid = Int(pidStr) else { continue }
+            let ppid = Int(ppidStr) ?? 0
             guard let fullTTY = ttyShortMap[ttyShort] else { continue }
 
             // Extract base command name from args
@@ -199,24 +212,36 @@ class ProcessMonitor {
             if Self.ignoredProcesses.contains(baseName) { continue }
 
             // Only track foreground processes (stat contains "+" for foreground)
-            let isForeground = stat.contains("+")
-            guard isForeground else { continue }
+            guard stat.contains("+") else { continue }
 
             let startTime = parseElapsedTime(etime)
-
-            // Keep the most recent foreground process per TTY
-            if let existing = result.processes[fullTTY], existing.startTime > startTime { continue }
-
-            // Build display name from args
-            let displayName = buildDisplayName(args: args, baseName: baseName)
-
-            result.processes[fullTTY] = ProcessInfo(
-                name: displayName,
-                pid: pid,
-                startTime: startTime,
-                exitCode: nil
+            fgCandidates[fullTTY, default: []].append(
+                FGCandidate(pid: pid, ppid: ppid, args: args, baseName: baseName, startTime: startTime)
             )
         }
+
+        // Resolve root user command per TTY: prefer the direct child of the shell
+        for (tty, candidates) in fgCandidates {
+            let chosen: FGCandidate?
+            if let shellPID = result.shellPIDs[tty] {
+                // Direct child of shell = the command the user typed
+                chosen = candidates.first(where: { $0.ppid == Int(shellPID) })
+                    ?? candidates.min(by: { $0.startTime < $1.startTime })  // fallback: oldest
+            } else {
+                chosen = candidates.min(by: { $0.startTime < $1.startTime })
+            }
+
+            if let c = chosen {
+                let displayName = buildDisplayName(args: c.args, baseName: c.baseName)
+                result.processes[tty] = ProcessInfo(
+                    name: displayName,
+                    pid: c.pid,
+                    startTime: c.startTime,
+                    exitCode: nil
+                )
+            }
+        }
+
         return result
     }
 

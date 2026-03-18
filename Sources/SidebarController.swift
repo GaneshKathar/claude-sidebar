@@ -38,6 +38,7 @@ class SidebarController {
     // Timers
     private var fastTimer: Timer?
     private var slowTimer: Timer?
+    private var processTickTimer: Timer?   // 1s tick for running process durations
     private var darwinObserverRegistered = false
     private var lastITermWindowCount = -1
     private var windowWatchTimer: Timer?
@@ -646,8 +647,14 @@ class SidebarController {
         }
         let win = slots[slotIndex]
 
-        // Placeholder — hotkeys are for navigation only, not opening new windows
-        if win.isPlaceholder { return }
+        // Placeholder — open a new iTerm window for the repo
+        if win.isPlaceholder {
+            if let repoNum = win.matchedRepoNum,
+               let repo = appConfig.repos.first(where: { $0.num == repoNum }) {
+                scanner.openWindowWithCWD(path: repo.expandedPath)
+            }
+            return
+        }
 
         // Focus the highest-priority tab (same logic as minimal mode click)
         let tab = win.tabs.max(by: { $0.state < $1.state }) ?? win.tabs.first
@@ -877,6 +884,10 @@ class SidebarController {
                                     self?.handleProcessExit(tty: tty, exitCode: exitCode)
                                 }
                             }
+                        } else if self.windows[wi].tabs[ti].processInfo?.pid == -1 {
+                            // fastPoll found no foreground process but fullPoll left a synthetic pid=-1.
+                            // Clear it so stale synthetic entries don't keep the tab showing "working".
+                            self.windows[wi].tabs[ti].processInfo = nil
                         }
                     }
                 }
@@ -914,9 +925,12 @@ class SidebarController {
                     let tty = merged[wi].tabs[ti].tty
                     if let oldWindow = windows.first(where: { $0.windowId == merged[wi].windowId }),
                        let oldTab = oldWindow.tabs.first(where: { $0.tty == tty }) {
-                        // Preserve fastPoll data when fullPoll scan returns nil/weaker values
-                        if merged[wi].tabs[ti].processInfo == nil {
-                            merged[wi].tabs[ti].processInfo = oldTab.processInfo
+                        // Process info priority: real pid (from fastPoll) > synthetic pid=-1 (from fullPoll) > nil.
+                        // fastPoll has kqueue watchers on real pids — never let fullPoll's
+                        // synthetic overwrite a running real process.
+                        if let old = oldTab.processInfo, old.pid > 0, old.exitCode == nil,
+                           (merged[wi].tabs[ti].processInfo?.pid ?? -1) <= 0 {
+                            merged[wi].tabs[ti].processInfo = old
                         }
                         if merged[wi].tabs[ti].cwd == nil, let oldCwd = oldTab.cwd {
                             merged[wi].tabs[ti].cwd = oldCwd
@@ -963,6 +977,82 @@ class SidebarController {
             }
         }
         updateUI()
+
+        // Auto-clear completed/failed process after 3 seconds → transition back to idle
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self else { return }
+            for wi in 0..<self.windows.count {
+                for ti in 0..<self.windows[wi].tabs.count {
+                    if self.windows[wi].tabs[ti].tty == tty,
+                       self.windows[wi].tabs[ti].processInfo?.exitCode != nil {
+                        self.windows[wi].tabs[ti].processInfo = nil
+                    }
+                }
+            }
+            self.updateUI()
+        }
+    }
+
+    // MARK: - Process Duration Tick (1s timer, only when processes are running)
+
+    private var currentTickInterval: TimeInterval = 0
+
+    /// Compute optimal tick interval based on shortest-running process:
+    ///   < 60 min  → 1s  (seconds visible: "1m 30s")
+    ///   >= 60 min → 60s (only minutes: "1h 23m")
+    private func optimalTickInterval() -> TimeInterval {
+        var shortest: TimeInterval = .greatestFiniteMagnitude
+        for tab in windows.flatMap({ $0.tabs }) {
+            guard let proc = tab.processInfo, proc.exitCode == nil else { continue }
+            shortest = min(shortest, proc.duration)
+        }
+        guard shortest < .greatestFiniteMagnitude else { return 0 }
+        return shortest < 3600 ? 1.0 : 60.0
+    }
+
+    private func updateProcessTickTimer() {
+        let interval = optimalTickInterval()
+
+        if interval == 0 {
+            // No running processes — stop timer
+            processTickTimer?.invalidate()
+            processTickTimer = nil
+            currentTickInterval = 0
+            return
+        }
+
+        // Recreate timer only if interval changed or timer doesn't exist
+        if processTickTimer == nil || currentTickInterval != interval {
+            processTickTimer?.invalidate()
+            currentTickInterval = interval
+            processTickTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.tickProcessDurations()
+            }
+        }
+    }
+
+    private func tickProcessDurations() {
+        let interval = optimalTickInterval()
+
+        if interval == 0 {
+            processTickTimer?.invalidate()
+            processTickTimer = nil
+            currentTickInterval = 0
+            return
+        }
+
+        // Interval tier changed (e.g. process crossed 60min) — recreate timer
+        if interval != currentTickInterval {
+            updateProcessTickTimer()
+        }
+
+        // Nudge only buttons whose tabs have a running process —
+        // the fingerprint includes durationString so only they rebuild.
+        for (_, btn) in windowButtons {
+            if btn.windowInfo.tabs.contains(where: { $0.processInfo != nil && $0.processInfo?.exitCode == nil }) {
+                btn.update(windowInfo: btn.windowInfo)
+            }
+        }
     }
 
     // MARK: - Slot Building (repo-aggregated + CWD-grouped)
@@ -989,8 +1079,11 @@ class SidebarController {
         var slots: [ITermWindowInfo] = []
         var claimedTTYs = Set<String>()
 
-        // Flatten all tabs from all scanned windows
-        let allTabs = windows.flatMap { $0.tabs }
+        // Flatten all tabs from all scanned windows.
+        // Include alwaysShow tabs so all iTerm windows remain visible when showAllITermWindows is on.
+        let allTabs = windows.flatMap { $0.tabs }.filter { tab in
+            tab.hasClaude || tab.processInfo != nil || tab.alwaysShow
+        }
 
         // 1. Repo slots: collect ALL tabs (from any terminal) whose CWD is under each repo path
         for repo in appConfig.repos {
@@ -1097,7 +1190,7 @@ class SidebarController {
         for (id, btn) in windowButtons where !slotIds.contains(id) {
             if let oldWin = windows.first(where: { $0.windowId == id }) {
                 for tab in oldWin.tabs {
-                    if let proc = tab.processInfo, proc.exitCode == nil {
+                    if let proc = tab.processInfo, proc.exitCode == nil, proc.pid > 0 {
                         processMonitor.unwatchPID(Int32(proc.pid))
                     }
                 }
@@ -1144,6 +1237,13 @@ class SidebarController {
                         self?.scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
                     }
                 }
+                if let repoNum = win.matchedRepoNum,
+                   let repo = appConfig.repos.first(where: { $0.num == repoNum }) {
+                    let repoPath = repo.expandedPath
+                    btn.onOpenNewWindow = { [weak self] in
+                        self?.scanner.openWindowWithCWD(path: repoPath)
+                    }
+                }
                 btn.translatesAutoresizingMaskIntoConstraints = false
                 windowStack.addArrangedSubview(btn)
                 btn.widthAnchor.constraint(equalTo: windowStack.widthAnchor).isActive = true
@@ -1158,6 +1258,9 @@ class SidebarController {
                 windowStack.insertArrangedSubview(btn, at: index)
             }
         }
+
+        // Start/stop 1s process duration timer based on running processes
+        updateProcessTickTimer()
 
         // Update document view height to fit content
         DispatchQueue.main.async { [weak self] in

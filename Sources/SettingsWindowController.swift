@@ -16,6 +16,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     private var launchAtLoginCheckbox: NSButton!
     private var minimalViewCheckbox: NSButton!
     private var autoStartClaudeCheckbox: NSButton!
+    private var openCommandField: NSTextField!
+    private var showAllITermWindowsCheckbox: NSButton!
     private var tableView: NSTableView!
     private var hookStatusLabel: NSTextField!
     private var installHooksButton: NSButton!
@@ -42,7 +44,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         hexFields = []
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 848),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 900),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -59,7 +61,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         contentView.autoresizingMask = [.width, .height]
         win.contentView = contentView
 
-        var yOffset: CGFloat = 808
+        var yOffset: CGFloat = 860
 
         // === Session detection notice — shown only on first install ===
         let noticeKey = "com.claudesidebar.sessionWarningShown"
@@ -265,6 +267,30 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
         autoStartClaudeCheckbox.state = (appConfig.autoStartClaude ?? false) ? .on : .off
         autoStartClaudeCheckbox.frame = NSRect(x: 20, y: yOffset, width: 300, height: 20)
         contentView.addSubview(autoStartClaudeCheckbox)
+
+        // Open command (runs after cd when opening a new window for a repo)
+        yOffset -= 28
+        let openCmdDescLabel = makeLabel("Open command (after cd):")
+        openCmdDescLabel.frame = NSRect(x: 20, y: yOffset, width: 180, height: 20)
+        contentView.addSubview(openCmdDescLabel)
+
+        // Pre-populate: if openCommand is nil but autoStartClaude is on, default to "claude"
+        let initialCommand = appConfig.openCommand ?? ((appConfig.autoStartClaude ?? false) ? "claude" : "")
+        openCommandField = NSTextField(string: initialCommand)
+        openCommandField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        openCommandField.placeholderString = "e.g. claude"
+        openCommandField.frame = NSRect(x: 208, y: yOffset - 1, width: 172, height: 22)
+        openCommandField.isEditable = true
+        openCommandField.isBezeled = true
+        openCommandField.bezelStyle = .roundedBezel
+        contentView.addSubview(openCommandField)
+
+        // Show all iTerm windows
+        yOffset -= 28
+        showAllITermWindowsCheckbox = NSButton(checkboxWithTitle: "Show all iTerm windows (track running processes)", target: nil, action: nil)
+        showAllITermWindowsCheckbox.state = (appConfig.showAllITermWindows ?? false) ? .on : .off
+        showAllITermWindowsCheckbox.frame = NSRect(x: 20, y: yOffset, width: 400, height: 20)
+        contentView.addSubview(showAllITermWindowsCheckbox)
 
         // === Section C: Status Colors ===
         yOffset -= 40
@@ -601,6 +627,8 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             fontScale: fontScaleStepper.doubleValue,
             minimalView: minimalViewCheckbox.state == .on,
             autoStartClaude: autoStartClaudeCheckbox.state == .on,
+            openCommand: openCommandField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? nil : openCommandField.stringValue.trimmingCharacters(in: .whitespaces),
+            showAllITermWindows: showAllITermWindowsCheckbox.state == .on,
             colorIdle:    colorWells.count > 0 ? colorWells[0].color.hexString : nil,
             colorWorking: colorWells.count > 1 ? colorWells[1].color.hexString : nil,
             colorAlert:   colorWells.count > 2 ? colorWells[2].color.hexString : nil,

@@ -113,6 +113,8 @@ class TabCard: NSView {
             statusView = makeClaudeStatusRow(tab: tab)
         } else if let proc = tab.processInfo {
             statusView = makeProcessStatusRow(proc: proc)
+        } else if tab.alwaysShow {
+            statusView = makeIdleStatusRow()
         }
         if let sv = statusView {
             sv.translatesAutoresizingMaskIntoConstraints = false
@@ -215,6 +217,31 @@ class TabCard: NSView {
             label.stringValue = "Claude"
             label.textColor = Theme.textDim
         }
+
+        row.addArrangedSubview(dot)
+        row.addArrangedSubview(label)
+        return row
+    }
+
+    private func makeIdleStatusRow() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 4
+        row.alignment = .centerY
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 2
+        dot.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.25).cgColor
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
+
+        let label = NSTextField(labelWithString: "Idle")
+        label.font = Theme.font(ofSize: 9, weight: .medium)
+        label.textColor = NSColor(white: 1.0, alpha: 0.3)
+        label.isBezeled = false; label.drawsBackground = false
+        label.isEditable = false; label.isSelectable = false
 
         row.addArrangedSubview(dot)
         row.addArrangedSubview(label)
