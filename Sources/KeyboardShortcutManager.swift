@@ -11,6 +11,8 @@ class KeyboardShortcutManager {
 
     var onToggleSidebar: (() -> Void)?
     var onFocusRepo: ((Int) -> Void)?
+    var onActiveOnly: (() -> Void)?     // Opt+Shift+- : show only active repo tabs
+    var onShowAll: (() -> Void)?        // Opt+Shift++ : show default (all tabs)
 
     func setup() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -29,10 +31,11 @@ class KeyboardShortcutManager {
 
                 let repoNum = Int(hotkeyID.id)
                 DispatchQueue.main.async {
-                    if repoNum == 100 {
-                        manager.onToggleSidebar?()
-                    } else {
-                        manager.onFocusRepo?(repoNum)
+                    switch repoNum {
+                    case 100: manager.onToggleSidebar?()
+                    case 101: manager.onActiveOnly?()
+                    case 102: manager.onShowAll?()
+                    default:  manager.onFocusRepo?(repoNum)
                     }
                 }
                 return noErr
@@ -68,8 +71,30 @@ class KeyboardShortcutManager {
             hotkeyRefs.append(nil)
         }
 
+        // Register Opt+Shift+- as "active only" filter (key code 27 = "-", ID 101)
+        let minusHotkeyID = EventHotKeyID(signature: OSType(0x434C5349), id: UInt32(101))
+        var minusHotkeyRef: EventHotKeyRef?
+        let minusStatus = RegisterEventHotKey(27, modifiers, minusHotkeyID,
+                                               GetApplicationEventTarget(), 0, &minusHotkeyRef)
+        if minusStatus == noErr {
+            hotkeyRefs.append(minusHotkeyRef)
+        } else {
+            hotkeyRefs.append(nil)
+        }
+
+        // Register Opt+Shift+= ("+") as "show all" (key code 24 = "=", ID 102)
+        let plusHotkeyID = EventHotKeyID(signature: OSType(0x434C5349), id: UInt32(102))
+        var plusHotkeyRef: EventHotKeyRef?
+        let plusStatus = RegisterEventHotKey(24, modifiers, plusHotkeyID,
+                                              GetApplicationEventTarget(), 0, &plusHotkeyRef)
+        if plusStatus == noErr {
+            hotkeyRefs.append(plusHotkeyRef)
+        } else {
+            hotkeyRefs.append(nil)
+        }
+
         let registered = hotkeyRefs.compactMap({ $0 }).count
-        try? "Registered \(registered)/10 hotkeys\n".write(toFile: "/tmp/claude-sidebar-hotkey.log", atomically: true, encoding: .utf8)
+        try? "Registered \(registered)/12 hotkeys\n".write(toFile: "/tmp/claude-sidebar-hotkey.log", atomically: true, encoding: .utf8)
     }
 
     deinit {

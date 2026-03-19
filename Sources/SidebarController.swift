@@ -34,6 +34,10 @@ class SidebarController: PollingDelegate, DockingDelegate {
 
     private let keyboardManager = KeyboardShortcutManager()
 
+    // View filter: .all = default, .activeOnly = only active repo tabs (no placeholders, no non-repo)
+    enum ViewFilter { case all, activeOnly }
+    var viewFilter: ViewFilter = .all
+
     // Width state
     let collapsedWidth: CGFloat = 62
     let expandedWidth: CGFloat = 300
@@ -381,6 +385,16 @@ class SidebarController: PollingDelegate, DockingDelegate {
         keyboardManager.onFocusRepo = { [weak self] repoNum in
             self?.focusHighPriorityTab(forRepoNum: repoNum)
         }
+        keyboardManager.onActiveOnly = { [weak self] in
+            guard let self = self else { return }
+            self.viewFilter = .activeOnly
+            self.updateUI()
+        }
+        keyboardManager.onShowAll = { [weak self] in
+            guard let self = self else { return }
+            self.viewFilter = .all
+            self.updateUI()
+        }
         keyboardManager.setup()
     }
 
@@ -469,7 +483,18 @@ class SidebarController: PollingDelegate, DockingDelegate {
     // MARK: - UI Update
 
     func updateUI() {
-        let slots = buildSlots()
+        let allSlots = buildSlots()
+
+        // Apply view filter
+        let slots: [TerminalWindow]
+        switch viewFilter {
+        case .all:
+            slots = allSlots
+        case .activeOnly:
+            // Show only slots with active sessions (hide inactive repo placeholders)
+            slots = allSlots.filter { !$0.isPlaceholder }
+        }
+
         let slotIds = Set(slots.map { $0.windowId })
         let isMinimal = appConfig.minimalView == true
 
