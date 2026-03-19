@@ -207,7 +207,7 @@ class PollingCoordinator {
                             delegate.windows[wi].tabs[ti].claudeState = .inactive
                         }
 
-                        if let cwd = cwds[tty], delegate.windows[wi].tabs[ti].terminalType != "cmux" {
+                        if let cwd = cwds[tty] {
                             delegate.windows[wi].tabs[ti].cwd = cwd
                         }
 

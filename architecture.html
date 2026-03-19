@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Sidebar — Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
+.container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+h1 { font-size: 28px; margin-bottom: 8px; color: #fff; }
+h2 { font-size: 20px; margin: 48px 0 16px; color: #a78bfa; border-bottom: 1px solid rgba(167,139,250,0.2); padding-bottom: 8px; }
+h3 { font-size: 15px; margin: 24px 0 8px; color: #7dd3fc; }
+p, li { font-size: 14px; color: #94a3b8; }
+ul { padding-left: 20px; margin: 8px 0; }
+li { margin: 4px 0; }
+code { background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 4px; font-size: 13px; color: #7dd3fc; font-family: Menlo, monospace; }
+.subtitle { font-size: 14px; color: #64748b; margin-bottom: 32px; }
+.highlight { color: #2dd4bf; }
+.warn { color: #f87171; }
+.dim { color: #475569; }
+
+/* Diagram styles */
+.diagram { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 24px; margin: 16px 0; overflow-x: auto; }
+.diagram pre { font-family: Menlo, monospace; font-size: 12px; line-height: 1.5; color: #cbd5e1; white-space: pre; }
+.diagram .box { color: #a78bfa; }
+.diagram .arrow { color: #475569; }
+.diagram .label { color: #7dd3fc; }
+.diagram .data { color: #2dd4bf; }
+.diagram .file { color: #fbbf24; }
+.diagram .state { color: #f87171; }
+
+/* Section tabs */
+.tabs { display: flex; gap: 4px; margin: 24px 0 16px; flex-wrap: wrap; }
+.tab { padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.04); color: #64748b; border: 1px solid transparent; transition: all 0.15s; }
+.tab:hover { background: rgba(255,255,255,0.08); color: #94a3b8; }
+.tab.active { background: rgba(167,139,250,0.15); color: #a78bfa; border-color: rgba(167,139,250,0.3); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+th { text-align: left; padding: 8px 12px; background: rgba(255,255,255,0.04); color: #7dd3fc; border-bottom: 1px solid rgba(255,255,255,0.08); }
+td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); color: #94a3b8; }
+td code { font-size: 12px; }
+
+/* Flow steps */
+.flow { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.flow-step { display: flex; align-items: flex-start; gap: 12px; }
+.flow-num { width: 24px; height: 24px; border-radius: 50%; background: rgba(167,139,250,0.2); color: #a78bfa; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.flow-text { font-size: 13px; color: #94a3b8; }
+.flow-arrow { text-align: center; color: #475569; font-size: 11px; padding-left: 6px; }
+
+/* Color swatch */
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Claude Sidebar — Architecture</h1>
+<p class="subtitle">Complete system overview: data flow, components, state management, and terminal adapters</p>
+
+<!-- Navigation tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="showTab('overview')">Overview</div>
+  <div class="tab" onclick="showTab('dataflow')">Data Flow</div>
+  <div class="tab" onclick="showTab('polling')">Polling Cycle</div>
+  <div class="tab" onclick="showTab('cmux')">cmux Mapping</div>
+  <div class="tab" onclick="showTab('states')">State Model</div>
+  <div class="tab" onclick="showTab('focus')">Focus Routing</div>
+  <div class="tab" onclick="showTab('ui')">UI Components</div>
+  <div class="tab" onclick="showTab('files')">File Map</div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- OVERVIEW -->
+<!-- ════════════════════════════════════════════ -->
+<div id="overview" class="tab-content active">
+<h2>System Overview</h2>
+<div class="diagram"><pre>
+<span class="box">┌─────────────────────────────────────────────────────────────────────┐</span>
+<span class="box">│</span>                        <span class="label">TERMINAL EMULATORS</span>                           <span class="box">│</span>
+<span class="box">│</span>                                                                     <span class="box">│</span>
+<span class="box">│</span>  <span class="box">┌──────────┐</span>  <span class="box">┌──────────┐</span>  <span class="box">┌──────────┐</span>  <span class="box">┌──────────┐</span>        <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> <span class="data">cmux</span>     <span class="box">│</span>  <span class="box">│</span> <span class="data">iTerm2</span>   <span class="box">│</span>  <span class="box">│</span> <span class="data">VS Code</span>  <span class="box">│</span>  <span class="box">│</span> <span class="data">Ghostty</span>  <span class="box">│</span>  ...    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> surfaces <span class="box">│</span>  <span class="box">│</span> sessions <span class="box">│</span>  <span class="box">│</span> terminal <span class="box">│</span>  <span class="box">│</span> windows  <span class="box">│</span>        <span class="box">│</span>
+<span class="box">│</span>  <span class="box">└────┬─────┘</span>  <span class="box">└────┬─────┘</span>  <span class="box">└────┬─────┘</span>  <span class="box">└────┬─────┘</span>        <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">│</span>              <span class="arrow">│</span>              <span class="arrow">│</span>              <span class="arrow">│</span>               <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">│</span> Each terminal has <span class="data">Claude Code</span> running in one or more TTYs     <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">│</span>              <span class="arrow">│</span>              <span class="arrow">│</span>              <span class="arrow">│</span>               <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">▼</span>              <span class="arrow">▼</span>              <span class="arrow">▼</span>              <span class="arrow">▼</span>               <span class="box">│</span>
+<span class="box">│</span>  <span class="file">sidebar-state.sh</span> (Claude hook — fires on lifecycle events)        <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">│</span>                                                             <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">▼</span>                                                             <span class="box">│</span>
+<span class="box">│</span>  <span class="file">/tmp/claude-sidebar/</span>                                             <span class="box">│</span>
+<span class="box">│</span>    <span class="arrow">├──</span> <span class="file">*.json</span>          <span class="dim">(hook state: repo, state, tty, session)</span>   <span class="box">│</span>
+<span class="box">│</span>    <span class="arrow">└──</span> <span class="file">focus*.json</span>     <span class="dim">(terminal identity: tty, term_program,</span>   <span class="box">│</span>
+<span class="box">│</span>                         <span class="dim"> cmux_surface_id, iterm_session_id)</span>       <span class="box">│</span>
+<span class="box">└──────────────┬──────────────────────────────────────────────────────┘</span>
+               <span class="arrow">│</span>
+               <span class="arrow">│</span> <span class="dim">kqueue notification + polling</span>
+               <span class="arrow">▼</span>
+<span class="box">┌─────────────────────────────────────────────────────────────────────┐</span>
+<span class="box">│</span>                      <span class="label">CLAUDE SIDEBAR APP</span>                              <span class="box">│</span>
+<span class="box">│</span>                                                                     <span class="box">│</span>
+<span class="box">│</span>  <span class="box">┌───────────────────────────────────────────────────────────┐</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> <span class="label">TerminalScanner</span> <span class="dim">(orchestrator)</span>                            <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> StateReader     <span class="dim">(reads hook + focus files)</span>          <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> TerminalDetector <span class="dim">(ps scan, pid→tty→comm)</span>           <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> TerminalRegistry <span class="dim">(adapter dispatch)</span>                <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">├──</span> ITerm2Adapter  <span class="dim">(AppleScript enum + focus)</span>    <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">├──</span> CmuxAdapter    <span class="dim">(socket API + sysctl TTY)</span>    <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">├──</span> VSCodeAdapter  <span class="dim">(extension socket)</span>           <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">├──</span> KittyAdapter   <span class="dim">(kitty @ commands)</span>           <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">└──</span> GenericAdapter <span class="dim">(TTY-based, any terminal)</span>    <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> CWDResolver      <span class="dim">(shell CWD via lsof/proc)</span>         <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">└──</span> BranchResolver   <span class="dim">(git branch via rev-parse)</span>         <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">└───────────────────────────────────────────────────────────┘</span>    <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">│</span>                                                             <span class="box">│</span>
+<span class="box">│</span>       <span class="arrow">▼</span> [TerminalWindow] → SlotBuilder → [display slots]              <span class="box">│</span>
+<span class="box">│</span>                                                                     <span class="box">│</span>
+<span class="box">│</span>  <span class="box">┌───────────────────────────────────────────────────────────┐</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> <span class="label">SidebarController</span> <span class="dim">(UI)</span>                                     <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> PollingCoordinator <span class="dim">(full/fast poll + enrichment)</span>    <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> DockingManager     <span class="dim">(screen edge, resize, drag)</span>    <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">├──</span> WindowButton[]     <span class="dim">(one per repo/group slot)</span>      <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">│</span>    <span class="arrow">└──</span> TabCard[]       <span class="dim">(one per tab in the slot)</span>     <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>   <span class="arrow">└──</span> SlotBuilder        <span class="dim">(CWD→repo matching + grouping)</span> <span class="box">│</span>    <span class="box">│</span>
+<span class="box">│</span>  <span class="box">└───────────────────────────────────────────────────────────┘</span>    <span class="box">│</span>
+<span class="box">└─────────────────────────────────────────────────────────────────────┘</span>
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- DATA FLOW -->
+<!-- ════════════════════════════════════════════ -->
+<div id="dataflow" class="tab-content">
+<h2>Data Flow</h2>
+
+<h3>1. Hook → State Files</h3>
+<div class="diagram"><pre>
+<span class="data">Claude Code</span> starts in a terminal
+       <span class="arrow">│</span>
+       <span class="arrow">│</span> <span class="dim">SessionStart event</span>
+       <span class="arrow">▼</span>
+<span class="file">sidebar-state.sh</span>
+       <span class="arrow">│</span>
+       <span class="arrow">├──▶</span> <span class="file">/tmp/claude-sidebar/{session}-{tty}.json</span>
+       <span class="arrow">│</span>     <span class="data">{ repo, state: "active", session_id, cwd, tty, timestamp }</span>
+       <span class="arrow">│</span>
+       <span class="arrow">└──▶</span> <span class="file">/tmp/claude-sidebar/focus{tty}.json</span>  <span class="dim">(only at SessionStart)</span>
+             <span class="data">{ tty, term_program, cmux_workspace_id, cmux_surface_id,</span>
+             <span class="data">  cmux_socket_path, iterm_session_id, kitty_*, timestamp }</span>
+</pre></div>
+
+<h3>2. State Transitions via Hook Events</h3>
+<div class="diagram"><pre>
+<span class="label">Event</span>                <span class="arrow">→</span>  <span class="label">State written</span>      <span class="arrow">→</span>  <span class="label">Sidebar shows</span>
+─────────────────────────────────────────────────────────────────
+SessionStart         <span class="arrow">→</span>  <span class="state">"active"</span>           <span class="arrow">→</span>  <span style="color:#CBD5E1">● Claude active</span>
+UserPromptSubmit     <span class="arrow">→</span>  <span class="state">"working"</span>          <span class="arrow">→</span>  <span style="color:#7DD3FC">● Claude working</span>
+Stop                 <span class="arrow">→</span>  <span class="state">"idle"</span>             <span class="arrow">→</span>  <span style="color:#2DD4BF">● Claude idle</span>
+Notification         <span class="arrow">→</span>  <span class="state">"alert"</span>            <span class="arrow">→</span>  <span style="color:#F87171">● Needs permission</span>
+PermissionRequest    <span class="arrow">→</span>  <span class="state">"alert"</span>            <span class="arrow">→</span>  <span style="color:#F87171">● Needs permission</span>
+PostToolUse          <span class="arrow">→</span>  <span class="dim">(alert→working only)</span>
+SessionEnd           <span class="arrow">→</span>  <span class="dim">(deletes state file)</span>
+</pre></div>
+
+<h3>3. Sidebar Reads State</h3>
+<div class="diagram"><pre>
+<span class="label">StateReader</span>
+  <span class="arrow">├──</span> readStates()      <span class="arrow">→</span> <span class="data">HookStates { byRepo, byTTY, byTTYRepo, byTTYTimestamp }</span>
+  <span class="arrow">└──</span> readFocusFiles()  <span class="arrow">→</span> <span class="data">[String: TerminalFocus]</span>  <span class="dim">(keyed by TTY path)</span>
+
+<span class="label">TerminalDetector</span>
+  <span class="arrow">└──</span> scanProcesses()  <span class="arrow">→</span> <span class="data">PSScanResult { claudeTTYs, shellPIDs, pidToComm, pidToTTY }</span>
+       <span class="dim">runs: ps -eo pid,ppid,tty,comm</span>
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- POLLING -->
+<!-- ════════════════════════════════════════════ -->
+<div id="polling" class="tab-content">
+<h2>Polling Cycle</h2>
+
+<div class="diagram"><pre>
+<span class="label">PollingCoordinator</span>
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> <span class="data">Darwin notification</span> <span class="dim">(com.claudesidebar.update)</span>
+       <span class="arrow">│</span>    <span class="arrow">└──▶</span> triggers immediate fast poll
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> <span class="data">Fast poll</span> <span class="dim">(every 5s when active)</span>
+       <span class="arrow">│</span>    <span class="arrow">├──</span> ProcessMonitor.discoverProcesses(ttys:)
+       <span class="arrow">│</span>    <span class="arrow">├──</span> ProcessMonitor.detectCWDs(shellPIDs:)
+       <span class="arrow">│</span>    <span class="arrow">└──</span> Enriches existing windows in-place:
+       <span class="arrow">│</span>         <span class="arrow">├──</span> Update Claude state per TTY
+       <span class="arrow">│</span>         <span class="arrow">├──</span> Update CWD from shell
+       <span class="arrow">│</span>         <span class="arrow">├──</span> Update git branch
+       <span class="arrow">│</span>         <span class="arrow">└──</span> Detect/watch new processes
+       <span class="arrow">│</span>
+       <span class="arrow">└──</span> <span class="data">Full poll</span> <span class="dim">(every pollInterval, default 10s)</span>
+            <span class="arrow">└──</span> TerminalScanner.scan()
+                 <span class="arrow">│</span>
+                 <span class="arrow">├──</span> <span class="label">Step 1:</span> Adapter enumeration
+                 <span class="arrow">│</span>    <span class="dim">Each adapter with .nativeEnumeration:</span>
+                 <span class="arrow">│</span>    <span class="arrow">├──</span> ITerm2Adapter  <span class="dim">→ AppleScript → windows/tabs</span>
+                 <span class="arrow">│</span>    <span class="arrow">├──</span> CmuxAdapter    <span class="dim">→ socket API → workspaces/surfaces</span>
+                 <span class="arrow">│</span>    <span class="arrow">└──</span> KittyAdapter   <span class="dim">→ kitty @ ls → windows/tabs</span>
+                 <span class="arrow">│</span>
+                 <span class="arrow">├──</span> <span class="label">Step 2:</span> Generic scanner
+                 <span class="arrow">│</span>    <span class="dim">TTYs not claimed by adapters → group by terminal app</span>
+                 <span class="arrow">│</span>    <span class="dim">Filters out TTYs claimed by enumerating adapters</span>
+                 <span class="arrow">│</span>
+                 <span class="arrow">├──</span> <span class="label">Step 3:</span> CWD + Branch resolution
+                 <span class="arrow">│</span>    <span class="dim">For tabs with nil CWD → resolve from shell</span>
+                 <span class="arrow">│</span>    <span class="dim">For all tabs → resolve git branch</span>
+                 <span class="arrow">│</span>
+                 <span class="arrow">└──</span> <span class="label">Step 4:</span> Build sessionId→tab cache <span class="dim">(for focus routing)</span>
+
+                      <span class="arrow">▼</span>
+
+              <span class="label">SlotBuilder.buildSlots()</span>
+                 <span class="arrow">│</span>
+                 <span class="arrow">├──</span> Match tabs to repos by CWD path
+                 <span class="arrow">├──</span> Sort: Claude first, then by state priority
+                 <span class="arrow">├──</span> Group remaining by git root
+                 <span class="arrow">└──</span> Create placeholder slots for empty repos
+
+                      <span class="arrow">▼</span>
+
+              <span class="label">SidebarController.updateUI()</span>
+                 <span class="arrow">└──</span> Create/update WindowButton + TabCard views
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- CMUX MAPPING -->
+<!-- ════════════════════════════════════════════ -->
+<div id="cmux" class="tab-content">
+<h2>cmux Surface → TTY Mapping</h2>
+
+<h3>The Problem</h3>
+<p>cmux's <code>surface.list</code> API returns surface UUIDs but NOT their TTYs. We need TTYs for Claude detection and CWD resolution.</p>
+
+<h3>The Solution: sysctl KERN_PROCARGS2</h3>
+<div class="diagram"><pre>
+<span class="label">cmux sets env vars in every surface's shell:</span>
+  CMUX_SURFACE_ID=112DE1F7-3EA2-4FC9-8DF4-CF73F49383B1
+  CMUX_WORKSPACE_ID=761AED64-EA86-4F5C-9759-83096A49B622
+
+<span class="label">macOS restricts reading shell env (login shells → size=32)</span>
+<span class="label">BUT child processes inherit env and ARE readable:</span>
+
+  <span class="data">gitstatusd</span> <span class="dim">(powerlevel10k — present on every zsh terminal)</span>
+  <span class="data">claude</span>     <span class="dim">(Claude Code process)</span>
+  <span class="data">any command</span> <span class="dim">(make, npm, sleep — anything the user runs)</span>
+
+<span class="label">Flow:</span>
+
+  <span class="box">┌──────────────────────────────────────┐</span>
+  <span class="box">│</span> <span class="label">PSScanResult.pidToTTY</span>              <span class="box">│</span>
+  <span class="box">│</span>   pid 43830 → /dev/ttys005           <span class="box">│</span>
+  <span class="box">│</span>   pid 61157 → /dev/ttys001           <span class="box">│</span>
+  <span class="box">│</span>   <span class="dim">(from existing ps scan, free)</span>       <span class="box">│</span>
+  <span class="box">└──────────┬───────────────────────────┘</span>
+             <span class="arrow">│</span>
+             <span class="arrow">▼</span>
+  <span class="box">┌──────────────────────────────────────┐</span>
+  <span class="box">│</span> <span class="label">sysctl(KERN_PROCARGS2, pid)</span>         <span class="box">│</span>
+  <span class="box">│</span>   Read env of non-shell processes    <span class="box">│</span>
+  <span class="box">│</span>   Find CMUX_SURFACE_ID=xxx           <span class="box">│</span>
+  <span class="box">│</span>   <span class="dim">~6 microseconds per PID</span>             <span class="box">│</span>
+  <span class="box">│</span>   <span class="dim">~0.05ms total for all TTYs</span>          <span class="box">│</span>
+  <span class="box">└──────────┬───────────────────────────┘</span>
+             <span class="arrow">│</span>
+             <span class="arrow">▼</span>
+  <span class="box">┌──────────────────────────────────────┐</span>
+  <span class="box">│</span> <span class="label">ttyToSurfaceCache</span> <span class="dim">(persists across polls)</span>
+  <span class="box">│</span>   /dev/ttys001 → E1FD844E-...        <span class="box">│</span>
+  <span class="box">│</span>   /dev/ttys002 → 112DE1F7-...        <span class="box">│</span>
+  <span class="box">│</span>   /dev/ttys005 → DCCC542A-...        <span class="box">│</span>
+  <span class="box">│</span>   <span class="dim">(cleaned when shell exits)</span>          <span class="box">│</span>
+  <span class="box">└──────────────────────────────────────┘</span>
+
+<span class="label">Incremental:</span> Surfaces without any child process yet
+(empty terminal) get mapped on the next poll when the user
+runs any command — even a brief <code>ls</code>.
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- STATE MODEL -->
+<!-- ════════════════════════════════════════════ -->
+<div id="states" class="tab-content">
+<h2>5-State Model</h2>
+
+<table>
+  <tr><th>Priority</th><th>State</th><th>Color</th><th>Hex</th><th>When</th></tr>
+  <tr><td>4 (highest)</td><td>alert</td><td><span class="swatch" style="background:#F87171"></span>Coral</td><td><code>#F87171</code></td><td>Needs permission / process error</td></tr>
+  <tr><td>3</td><td>working</td><td><span class="swatch" style="background:#7DD3FC"></span>Soft blue</td><td><code>#7DD3FC</code></td><td>Claude processing / tool use / process running</td></tr>
+  <tr><td>2</td><td>idle</td><td><span class="swatch" style="background:#2DD4BF"></span>Teal</td><td><code>#2DD4BF</code></td><td>Claude response complete, waiting</td></tr>
+  <tr><td>1</td><td>active</td><td><span class="swatch" style="background:#CBD5E1"></span>Slate</td><td><code>#CBD5E1</code></td><td>Claude just started / non-Claude terminal idle</td></tr>
+  <tr><td>0</td><td>inactive</td><td><span class="swatch" style="background:rgba(255,255,255,0.1)"></span>Dim</td><td>10% white</td><td>Repo placeholder only (no terminal window)</td></tr>
+</table>
+
+<h3>State Sources</h3>
+<div class="diagram"><pre>
+<span class="label">Claude tabs:</span>
+  Hook state file <span class="arrow">→</span> "active" / "working" / "idle" / "alert"
+  ps scan         <span class="arrow">→</span> claude process running? (fallback to .idle)
+
+<span class="label">Non-Claude tabs:</span>
+  Process running  <span class="arrow">→</span> .working
+  Process error    <span class="arrow">→</span> .alert
+  Process success  <span class="arrow">→</span> .idle <span class="dim">(stays 30s, then clears)</span>
+  No activity      <span class="arrow">→</span> .active <span class="dim">(slate — "terminal exists")</span>
+
+<span class="label">Slot header (TerminalWindow.state):</span>
+  max(tab.state for all tabs) <span class="dim">— highest priority wins</span>
+
+<span class="label">Collapsed bar segments:</span>
+  Each segment = one tab's segmentColor
+  Claude tabs use claudeState color
+  Non-Claude tabs use Theme.active (slate)
+</pre></div>
+
+<h3>Detection: Hook + ps Only (No Title Heuristics)</h3>
+<p>Claude detection relies on:</p>
+<ul>
+  <li><code>hookStates.byTTY[tty]</code> — hook state file exists for this TTY</li>
+  <li><code>psInfo.claudeTTYs.contains(tty)</code> — claude process running on this TTY</li>
+</ul>
+<p>Title-based detection was removed to avoid false positives (e.g., "claude-sidebar" directory name matching "claude").</p>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- FOCUS ROUTING -->
+<!-- ════════════════════════════════════════════ -->
+<div id="focus" class="tab-content">
+<h2>Focus Routing (Tab Click)</h2>
+
+<div class="diagram"><pre>
+<span class="label">User clicks a tab card</span>
+       <span class="arrow">│</span>
+       <span class="arrow">▼</span>
+<span class="label">SidebarController</span>
+  scanner.focusSession(windowId: tab.windowId, sessionId: tab.sessionId)
+       <span class="arrow">│</span>
+       <span class="arrow">▼</span>
+<span class="label">TerminalScanner.focusSession()</span>
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> Look up focus data:
+       <span class="arrow">│</span>    <span class="arrow">├──</span> freshFocus[sessionId] <span class="dim">(if sessionId is a TTY path)</span>
+       <span class="arrow">│</span>    <span class="arrow">└──</span> sessionIdToTab[sessionId].tty <span class="dim">(if UUID, find TTY from cache)</span>
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> Find adapter:
+       <span class="arrow">│</span>    registry.adapterForTTY(lookupKey, focus, psInfo)
+       <span class="arrow">│</span>    <span class="dim">Each adapter's claimsSession() checked in priority order</span>
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> <span class="label">Adapter found:</span>  adapter.focusSession(windowId, sessionId, focus)
+       <span class="arrow">│</span>
+       <span class="arrow">├──</span> <span class="label">Fallback:</span>  Find adapter by tab.terminalType
+       <span class="arrow">│</span>
+       <span class="arrow">└──</span> <span class="label">Last resort:</span>  Activate app by window name/PID
+
+<span class="label">Per-adapter focus:</span>
+
+  <span class="data">CmuxAdapter:</span>
+    Case 1: surfaceWorkspaceMap[sessionId] exists
+      <span class="arrow">→</span> activateCmuxApp()
+      <span class="arrow">→</span> workspace.select (bring workspace to front)
+      <span class="arrow">→</span> surface.focus (focus specific pane)
+
+    Case 2: sessionId starts with "/dev/"
+      <span class="arrow">→</span> focus.cmux_workspace_id → workspace.select
+
+    Case 3: workspace UUID fallback
+      <span class="arrow">→</span> workspace.select
+
+  <span class="data">ITerm2Adapter:</span>
+    <span class="arrow">→</span> AppleScript: find session by unique ID, select it
+
+  <span class="data">VSCodeAdapter:</span>
+    <span class="arrow">→</span> Activate VS Code + extension socket → focusByTTY
+
+  <span class="data">GenericAdapter:</span>
+    <span class="arrow">→</span> NSWorkspace activate app by PID
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- UI COMPONENTS -->
+<!-- ════════════════════════════════════════════ -->
+<div id="ui" class="tab-content">
+<h2>UI Components</h2>
+
+<div class="diagram"><pre>
+<span class="box">┌─────────────────────────────────────────────────────────────┐</span>
+<span class="box">│</span> <span class="label">SidebarController</span> <span class="dim">(NSPanel, borderless, always on top)</span>     <span class="box">│</span>
+<span class="box">│</span>                                                             <span class="box">│</span>
+<span class="box">│</span>  <span class="box">┌─────────────────────────────────────────────────────┐</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> <span class="label">ScrollView</span> + windowStack (NSStackView, vertical)    <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>                                                     <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">┌───────────────────────────────────────────────┐</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span> <span class="label">WindowButton</span> <span class="dim">(one per slot)</span>                  <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>                                               <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  <span class="label">Expanded mode:</span>                              <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  ┌─ Gradient header bar ──────────────────┐   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │ [badge] name          ~/path           │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  └────────────────────────────────────────┘   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  ┌─ TabCard ──────────────────────────────┐   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │ ● ~/path/to/file               cmux   │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │   ⎇ branch-name                        │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │   ● Claude working                     │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  └────────────────────────────────────────┘   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  ┌─ TabCard ──────────────────────────────┐   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │ ● ~/other/path                 cmux   │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │   ⎇ main                               │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │   ● Idle                               │   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  └────────────────────────────────────────┘   <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>                                               <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  <span class="label">Collapsed mode:</span>                             <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  ┌─┬──────┐                                  <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  │▐│  S1  │  ← segment bar + badge           <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>  └─┴──────┘                                  <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>    6 tabs   ← tab count                    <span class="box">│</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="box">└───────────────────────────────────────────────┘</span>  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>                                                     <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  <span class="dim">(more WindowButtons...)</span>                          <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">└─────────────────────────────────────────────────────┘</span>  <span class="box">│</span>
+<span class="box">│</span>                                                             <span class="box">│</span>
+<span class="box">│</span>  <span class="box">┌─────────────────────────────────────────────────────┐</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span> <span class="label">Footer</span> <span class="dim">(expanded only)</span>                              <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">│</span>  [C] Claude Manager                          [⚙]  <span class="box">│</span>  <span class="box">│</span>
+<span class="box">│</span>  <span class="box">└─────────────────────────────────────────────────────┘</span>  <span class="box">│</span>
+<span class="box">└─────────────────────────────────────────────────────────────┘</span>
+</pre></div>
+
+<h3>Expand/Collapse</h3>
+<div class="diagram"><pre>
+<span class="label">Hover tracking:</span>
+  Mouse enters sidebar zone <span class="arrow">→</span> expandSidebar() <span class="arrow">→</span> 62px → 300px
+  Mouse leaves sidebar zone <span class="arrow">→</span> collapseSidebar() <span class="arrow">→</span> 300px → 62px
+
+<span class="label">DockingManager:</span>
+  Keeps sidebar docked to screen edge
+  Handles multi-monitor, Y persistence, drag tracking
+</pre></div>
+</div>
+
+<!-- ════════════════════════════════════════════ -->
+<!-- FILE MAP -->
+<!-- ════════════════════════════════════════════ -->
+<div id="files" class="tab-content">
+<h2>File Map</h2>
+
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>hooks/sidebar-state.sh</code></td><td>Claude Code hook — writes state + focus files to /tmp</td></tr>
+  <tr><td><code>config.json</code></td><td>User config: repos, colors, poll interval, etc.</td></tr>
+  <tr><td colspan="2" style="color:#7dd3fc;padding-top:12px">Core</td></tr>
+  <tr><td><code>Sources/Models.swift</code></td><td>All data types: AppConfig, HookState, TerminalFocus, SessionState, TerminalTab, TerminalWindow, ProcessInfo</td></tr>
+  <tr><td><code>Sources/Theme.swift</code></td><td>Colors (idle/working/alert/active/running), fonts, hex helpers</td></tr>
+  <tr><td><code>Sources/LayoutConstants.swift</code></td><td>Layout numbers: widths, heights, delays, limits</td></tr>
+  <tr><td><code>Sources/Protocols.swift</code></td><td>TerminalScanning, ProcessMonitoring, StateReading protocols</td></tr>
+  <tr><td colspan="2" style="color:#7dd3fc;padding-top:12px">Scanning & Adapters</td></tr>
+  <tr><td><code>Sources/ITermScanner.swift</code></td><td>TerminalScanner — orchestrates all adapters, builds windows</td></tr>
+  <tr><td><code>Sources/Adapters/TerminalAdapter.swift</code></td><td>Protocol: enumerateSessions, focusSession, claimsSession</td></tr>
+  <tr><td><code>Sources/Adapters/TerminalRegistry.swift</code></td><td>Singleton: ordered adapter list, adapterForTTY dispatch</td></tr>
+  <tr><td><code>Sources/Adapters/CmuxAdapter.swift</code></td><td>cmux: socket API, surface enum, sysctl TTY mapping, surface.focus</td></tr>
+  <tr><td><code>Sources/Adapters/ITerm2Adapter.swift</code></td><td>iTerm2: AppleScript enum + focus</td></tr>
+  <tr><td><code>Sources/Adapters/VSCodeAdapter.swift</code></td><td>VS Code: extension socket focus</td></tr>
+  <tr><td><code>Sources/Adapters/KittyAdapter.swift</code></td><td>Kitty: remote control commands</td></tr>
+  <tr><td><code>Sources/Adapters/GhosttyAdapter.swift</code></td><td>Ghostty: openWithCWD support</td></tr>
+  <tr><td><code>Sources/Adapters/GenericTerminalAdapter.swift</code></td><td>Fallback: activate app by PID</td></tr>
+  <tr><td colspan="2" style="color:#7dd3fc;padding-top:12px">Services</td></tr>
+  <tr><td><code>Sources/Services/TerminalDetector.swift</code></td><td>ps scan: PSScanResult, process ancestry, terminal app detection</td></tr>
+  <tr><td><code>Sources/Services/CWDResolver.swift</code></td><td>Shell CWD resolution (lsof/proc_pidinfo)</td></tr>
+  <tr><td><code>Sources/Services/BranchResolver.swift</code></td><td>Git branch via rev-parse (cached)</td></tr>
+  <tr><td><code>Sources/StateReader.swift</code></td><td>Reads /tmp/claude-sidebar/ hook state + focus files</td></tr>
+  <tr><td><code>Sources/ProcessMonitor.swift</code></td><td>kqueue PID watcher + batched ps discovery</td></tr>
+  <tr><td colspan="2" style="color:#7dd3fc;padding-top:12px">UI</td></tr>
+  <tr><td><code>Sources/SidebarController.swift</code></td><td>Main UI: window, scroll, header/footer, hover expand/collapse</td></tr>
+  <tr><td><code>Sources/WindowButton.swift</code></td><td>Slot widget: expanded (header + tabs) / collapsed (badge + bar)</td></tr>
+  <tr><td><code>Sources/TabCard.swift</code></td><td>Tab row: dot + path + branch + state label</td></tr>
+  <tr><td><code>Sources/SlotBuilder.swift</code></td><td>CWD→repo matching, tab sorting, group labeling</td></tr>
+  <tr><td><code>Sources/PollingCoordinator.swift</code></td><td>Full/fast poll orchestration, process enrichment</td></tr>
+  <tr><td><code>Sources/DockingManager.swift</code></td><td>Screen edge docking, multi-monitor, drag</td></tr>
+  <tr><td><code>Sources/KeyboardShortcutManager.swift</code></td><td>Global hotkeys</td></tr>
+  <tr><td><code>Sources/SettingsWindowController.swift</code></td><td>Settings UI panel</td></tr>
+</table>
+</div>
+
+</div><!-- container -->
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

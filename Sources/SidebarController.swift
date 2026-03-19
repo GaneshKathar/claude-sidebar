@@ -133,24 +133,32 @@ class SidebarController: PollingDelegate, DockingDelegate {
     func layoutSubviews() {
         let w = contentView.bounds.width
         let h = contentView.bounds.height
-        let headerH: CGFloat = 48
+        let headerH: CGFloat = 0
         let footerH: CGFloat = isSidebarExpanded ? 44 : 0
 
         headerView.frame = NSRect(x: 0, y: 0, width: w, height: headerH)
+        headerView.isHidden = true
 
-        // Center logo in collapsed, left-align in expanded
-        if isSidebarExpanded {
-            logoView.frame = NSRect(x: 17, y: 10, width: 28, height: 28)
-        } else {
-            logoView.frame = NSRect(x: (w - 28) / 2, y: 10, width: 28, height: 28)
-        }
-
-        let scrollTop = headerH + 4
+        let scrollTop: CGFloat = 4
         let scrollH = h - scrollTop - footerH
         scrollView.frame = NSRect(x: 0, y: scrollTop, width: w, height: max(scrollH, 0))
 
         footerView.frame = NSRect(x: 0, y: h - footerH, width: w, height: footerH)
         footerView.isHidden = !isSidebarExpanded
+
+        // Footer layout: vertically center all items (footer = 44px, center = 22px)
+        let fy: CGFloat = (44 - 24) / 2  // 10px for 24px items
+        if isSidebarExpanded {
+            logoView.frame = NSRect(x: 12, y: fy, width: 24, height: 24)
+            titleLabel.frame = NSRect(x: 44, y: fy + 2, width: w - 88, height: 20)
+        } else {
+            logoView.frame = NSRect(x: (w - 24) / 2, y: fy, width: 24, height: 24)
+        }
+
+        if let settingsBtn = footerView.subviews.first(where: { $0.tag == 999 }) {
+            settingsBtn.frame = NSRect(x: w - 36, y: (44 - 28) / 2, width: 28, height: 28)
+            settingsBtn.isHidden = !isSidebarExpanded
+        }
 
         // Document view width must match scroll view clip bounds
         let clipW = scrollView.contentView.bounds.width
@@ -162,11 +170,26 @@ class SidebarController: PollingDelegate, DockingDelegate {
         docView.frame = NSRect(x: 0, y: 0, width: clipW, height: max(contentHeight, scrollH))
     }
 
-    // MARK: - Header
+    // MARK: - Header (empty — content moved to footer)
 
     private func setupHeader() {
         headerView.wantsLayer = true
+    }
 
+    // MARK: - Footer (logo + title + settings)
+
+    private func setupFooter() {
+        footerView.wantsLayer = true
+        footerView.isHidden = false
+
+        let footerBorder = NSView()
+        footerBorder.wantsLayer = true
+        footerBorder.layer?.backgroundColor = Theme.border.cgColor
+        footerBorder.frame = NSRect(x: 0, y: 0, width: 300, height: 1)
+        footerBorder.autoresizingMask = [.width]
+        footerView.addSubview(footerBorder)
+
+        // Logo
         logoView.wantsLayer = true
         logoView.layer?.cornerRadius = 6
         let gradient = CAGradientLayer()
@@ -176,72 +199,46 @@ class SidebarController: PollingDelegate, DockingDelegate {
         ]
         gradient.startPoint = CGPoint(x: 0, y: 0)
         gradient.endPoint = CGPoint(x: 1, y: 1)
-        gradient.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
-        gradient.cornerRadius = 6
+        gradient.frame = CGRect(x: 0, y: 0, width: 24, height: 24)
+        gradient.cornerRadius = 5
         logoView.layer?.addSublayer(gradient)
-        logoView.frame = NSRect(x: 17, y: 10, width: 28, height: 28)
-        headerView.addSubview(logoView)
+        logoView.frame = NSRect(x: 10, y: 10, width: 24, height: 24)
+        footerView.addSubview(logoView)
 
         let logoText = NSTextField(labelWithString: "C")
-        logoText.font = Theme.font(ofSize: 13, weight: .semibold)
+        logoText.font = Theme.font(ofSize: 12, weight: .bold)
         logoText.textColor = .white
         logoText.alignment = .center
         logoText.isBezeled = false
         logoText.drawsBackground = false
         logoText.isEditable = false
         logoText.isSelectable = false
-        logoText.frame = NSRect(x: 0, y: 3, width: 28, height: 22)
+        // Vertically center: use full frame and let text alignment handle it
+        logoText.frame = NSRect(x: 0, y: 4, width: 24, height: 16)
         logoView.addSubview(logoText)
 
-        titleLabel.font = Theme.font(ofSize: 13, weight: .semibold)
-        titleLabel.textColor = NSColor(white: 1.0, alpha: 0.8)
+        // Title (shown in expanded mode)
+        titleLabel.font = Theme.font(ofSize: 12, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 1.0, alpha: 0.7)
         titleLabel.isBezeled = false
         titleLabel.drawsBackground = false
         titleLabel.isEditable = false
         titleLabel.isSelectable = false
         titleLabel.alphaValue = 0
-        titleLabel.frame = NSRect(x: 55, y: 14, width: 200, height: 20)
-        headerView.addSubview(titleLabel)
+        titleLabel.frame = NSRect(x: 42, y: 12, width: 160, height: 20)
+        footerView.addSubview(titleLabel)
 
-        let headerBorder = NSView()
-        headerBorder.wantsLayer = true
-        headerBorder.layer?.backgroundColor = Theme.border.cgColor
-        headerBorder.frame = NSRect(x: 0, y: 47, width: 300, height: 1)
-        headerBorder.autoresizingMask = [.width]
-        headerView.addSubview(headerBorder)
-    }
-
-    // MARK: - Footer
-
-    private func setupFooter() {
-        footerView.wantsLayer = true
-        footerView.isHidden = true
-
-        let footerBorder = NSView()
-        footerBorder.wantsLayer = true
-        footerBorder.layer?.backgroundColor = Theme.border.cgColor
-        footerBorder.frame = NSRect(x: 0, y: 0, width: 300, height: 1)
-        footerBorder.autoresizingMask = [.width]
-        footerView.addSubview(footerBorder)
-
-        let settingsBtn = makeFooterButton(title: "\u{2699} Settings")
-        settingsBtn.frame = NSRect(x: 8, y: 6, width: 130, height: 32)
-        settingsBtn.target = self
-        settingsBtn.action = #selector(settingsTapped)
+        // Settings button (small icon on the right)
+        let settingsBtn = NSButton(title: "\u{2699}", target: self, action: #selector(settingsTapped))
+        settingsBtn.isBordered = false
+        settingsBtn.wantsLayer = true
+        settingsBtn.layer?.cornerRadius = 5
+        settingsBtn.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        settingsBtn.font = Theme.font(ofSize: 14)
+        settingsBtn.contentTintColor = NSColor(white: 1.0, alpha: 0.35)
+        settingsBtn.frame = NSRect(x: 0, y: 8, width: 28, height: 28)  // positioned in layoutSubviews
+        settingsBtn.tag = 999
         footerView.addSubview(settingsBtn)
-    }
-
-    private func makeFooterButton(title: String) -> NSButton {
-        let btn = NSButton(title: title, target: nil, action: nil)
-        btn.isBordered = false
-        btn.wantsLayer = true
-        btn.layer?.cornerRadius = 6
-        btn.layer?.borderColor = Theme.border.cgColor
-        btn.layer?.borderWidth = 1
-        btn.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
-        btn.font = Theme.font(ofSize: 11)
-        btn.contentTintColor = NSColor(white: 1.0, alpha: 0.4)
-        return btn
     }
 
     @objc private func settingsTapped() {
@@ -255,12 +252,12 @@ class SidebarController: PollingDelegate, DockingDelegate {
     // MARK: - DockingDelegate
 
     func collapsedContentHeight() -> CGFloat {
-        let headerH: CGFloat = 48
-        let padding: CGFloat = 28  // 4(scrollOffset) + 12(stackTop) + 12(stackBottom)
+        let footerH: CGFloat = 0   // footer hidden in collapsed
+        let padding: CGFloat = 24
         windowStack.layoutSubtreeIfNeeded()
         let stackH = windowStack.fittingSize.height
         let minHeight: CGFloat = 80
-        return max(headerH + stackH + padding, minHeight)
+        return max(footerH + stackH + padding, minHeight)
     }
 
     // MARK: - Hover Expand/Collapse
@@ -285,11 +282,11 @@ class SidebarController: PollingDelegate, DockingDelegate {
         let hitZone = NSRect(x: frame.origin.x - 4, y: frame.origin.y - 4,
                              width: frame.width + 8, height: frame.height + 8)
 
-        let headerH: CGFloat = 48
-        let inHeader = mouse.y >= frame.origin.y + frame.height - headerH
+        let footerH: CGFloat = 44
+        let inFooter = mouse.y <= frame.origin.y + footerH
             && mouse.x >= frame.origin.x && mouse.x <= frame.maxX
 
-        if hitZone.contains(mouse) && !isSidebarExpanded && !inHeader {
+        if hitZone.contains(mouse) && !isSidebarExpanded && !inFooter {
             expandSidebar()
         } else if !hitZone.contains(mouse) && isSidebarExpanded {
             collapseSidebar()
@@ -436,7 +433,7 @@ class SidebarController: PollingDelegate, DockingDelegate {
                 for wi in 0..<self.windows.count {
                     for ti in 0..<self.windows[wi].tabs.count {
                         let tty = self.windows[wi].tabs[ti].tty
-                        if let cwd = cwds[tty], self.windows[wi].tabs[ti].terminalType != "cmux" { self.windows[wi].tabs[ti].cwd = cwd }
+                        if let cwd = cwds[tty] { self.windows[wi].tabs[ti].cwd = cwd }
                         if let branch = branches[tty] { self.windows[wi].tabs[ti].gitBranch = branch }
                         if scanResult.claudeTTYs.contains(tty) {
                             self.windows[wi].tabs[ti].hasClaude = true

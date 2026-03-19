@@ -111,8 +111,11 @@ class CmuxAdapter: TerminalAdapter {
                 let (hasClaude, claudeState) = detectClaude(
                     tty: tty, hookStates: hookStates, psInfo: psInfo)
 
-                let cwd = surface["current_directory"] as? String
-                    ?? ws["current_directory"] as? String
+                // Only use workspace CWD as fallback when no TTY is mapped.
+                // Surfaces with TTY get their CWD resolved from the shell by polling.
+                let cwd: String? = tty.isEmpty
+                    ? (surface["current_directory"] as? String ?? ws["current_directory"] as? String)
+                    : nil
 
                 tabs.append(TerminalTab(
                     tabIndex: tabIdx,
