@@ -34,22 +34,28 @@ struct Theme {
     static let textMid = NSColor(white: 1.0, alpha: 0.5)
     static let textBright = NSColor(white: 1.0, alpha: 0.9)
     // Status colors — read from appConfig so settings changes take effect immediately
-    static var green: NSColor {   // idle — soft blue
-        appConfig.colorIdle.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(hexString: "#7DD3FC")!
+    static var active: NSColor {
+        appConfig.colorActive.flatMap { NSColor(hexString: $0) }
+            ?? NSColor(hexString: "#CBD5E1")!    // slate — Claude present, not yet working
     }
-    static var blue: NSColor {    // Claude working — teal
+    static var working: NSColor {
         appConfig.colorWorking.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(hexString: "#2DD4BF")!
+            ?? NSColor(hexString: "#7DD3FC")!    // soft blue — processing
     }
-    static var red: NSColor {     // alert — coral
+    static var alert: NSColor {
         appConfig.colorAlert.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(hexString: "#F87171")!
+            ?? NSColor(hexString: "#F87171")!    // coral — needs attention
     }
-    static var yellow: NSColor {  // process running (not user-configurable, kept for compatibility)
-        appConfig.colorRunning.flatMap { NSColor(hexString: $0) }
-            ?? NSColor(hexString: "#AAC4F5")!
+    static var idle: NSColor {
+        appConfig.colorIdle.flatMap { NSColor(hexString: $0) }
+            ?? NSColor(hexString: "#2DD4BF")!    // teal — done, at rest
     }
+    // Legacy aliases
+    static var running: NSColor { working }
+    static var green: NSColor { idle }
+    static var blue: NSColor { working }
+    static var red: NSColor { alert }
+    static var yellow: NSColor { working }
     static let purple = NSColor(red: 168/255, green: 85/255, blue: 247/255, alpha: 1.0)
     static let hover = NSColor(white: 1.0, alpha: 0.08)
     static let selected = NSColor(white: 1.0, alpha: 0.12)

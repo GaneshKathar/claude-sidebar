@@ -2,39 +2,35 @@
   "autoStartClaude" : false,
   "branchCacheTTL" : 10,
   "colorAlert" : "#f87171",
-  "colorIdle" : "#7dd3fc",
-  "colorWorking" : "#2dd4bf",
+  "colorIdle" : "#2dd4bf",
+  "colorWorking" : "#7dd3fc",
   "fontScale" : 1,
   "launchAtLogin" : false,
   "minimalView" : false,
-  "openCommand" : "cd polaris\/src\/rubrik\/spark-ui & claude",
   "pollInterval" : 10,
   "repos" : [
     {
-      "label" : "🛠️",
+      "label" : "S1",
       "num" : 1,
       "path" : "~\/rubrik\/sdmain-1",
-      "title" : "Feature 1"
+      "title" : "Feature feature feature feature"
     },
     {
-      "label" : "🔨",
+      "label" : "S2",
       "num" : 2,
-      "path" : "~\/rubrik\/sdmain-2",
-      "title" : "Feature 2"
+      "path" : "~\/rubrik\/sdmain-2"
     },
     {
-      "label" : "🔬",
+      "label" : "S3",
       "num" : 3,
-      "path" : "~\/rubrik\/sdmain-3",
-      "title" : "Infra\/Research"
+      "path" : "~\/rubrik\/sdmain-3"
     },
     {
-      "label" : "⚙️",
+      "label" : "S4",
       "num" : 4,
-      "path" : "~\/rubrik\/sdmain-4",
-      "title" : "Quick"
+      "path" : "~\/rubrik\/sdmain-4"
     }
   ],
-  "showAllITermWindows" : true,
+  "showAllTerminalWindows" : true,
   "staleTimeout" : 1800
 }

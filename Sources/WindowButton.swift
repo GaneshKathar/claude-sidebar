@@ -17,11 +17,11 @@ private class GradientView: NSView {
 // MARK: - Window Button (collapsed + expanded)
 
 class WindowButton: NSView {
-    var windowInfo: ITermWindowInfo
+    var windowInfo: TerminalWindow
     var isExpanded: Bool = false { didSet { if oldValue != isExpanded { rebuildUI() } } }
     var isMinimalMode: Bool = false
     var onToggle: (() -> Void)?
-    var onFocusTab: ((ITermTabInfo) -> Void)?
+    var onFocusTab: ((TerminalTab) -> Void)?
     var onFocusHighPriorityTab: (() -> Void)?
     var onOpenNewWindow: (() -> Void)?
 
@@ -29,7 +29,7 @@ class WindowButton: NSView {
     private var isHovered = false
     private var lastRenderFingerprint: String = ""
 
-    init(windowInfo: ITermWindowInfo) {
+    init(windowInfo: TerminalWindow) {
         self.windowInfo = windowInfo
         super.init(frame: .zero)
         wantsLayer = true
@@ -47,7 +47,7 @@ class WindowButton: NSView {
         return "\(windowInfo.windowId):\(windowInfo.isPlaceholder):\(windowInfo.windowName):\(windowInfo.displayPath ?? ""):\(windowInfo.displayLabel):\(isExpanded):\(isMinimalMode):\(tabsKey)"
     }
 
-    func update(windowInfo: ITermWindowInfo) {
+    func update(windowInfo: TerminalWindow) {
         self.windowInfo = windowInfo
         let fp = makeFingerprint()
         guard fp != lastRenderFingerprint else { return }
@@ -117,13 +117,16 @@ class WindowButton: NSView {
         buildExpanded()
     }
 
-    // MARK: - Minimal Mode (fused bar + badge + tab count)
+    // MARK: - Minimal / Collapsed Mode (shared fused bar + badge layout)
 
-    private func buildMinimal() {
+    private func buildMinimal() { buildFusedBarBadge() }
+    private func buildCollapsed() { buildFusedBarBadge() }
+
+    /// Shared builder for both minimal and collapsed modes (identical layout).
+    private func buildFusedBarBadge() {
         layer?.cornerRadius = 0; layer?.borderWidth = 0
         layer?.borderColor = nil; layer?.backgroundColor = nil; layer?.masksToBounds = false
 
-        // Fused bar+badge: same structure as collapsed but minimal layout
         let fused = NSView()
         fused.wantsLayer = true
         fused.layer?.cornerRadius = 10
@@ -132,10 +135,9 @@ class WindowButton: NSView {
         fused.translatesAutoresizingMaskIntoConstraints = false
         addSubview(fused)
 
-        // Left segmented bar (4px wide) showing per-tab status
         let bar = NSView()
         bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
+        bar.layer?.backgroundColor = NSColor.clear.cgColor
         bar.translatesAutoresizingMaskIntoConstraints = false
         fused.addSubview(bar)
 
@@ -151,7 +153,7 @@ class WindowButton: NSView {
             for tab in activeTabs {
                 let seg = NSView()
                 seg.wantsLayer = true
-                seg.layer?.backgroundColor = tabSegmentColor(tab).cgColor
+                seg.layer?.backgroundColor = tab.segmentColor.cgColor
                 segStack.addArrangedSubview(seg)
             }
 
@@ -163,16 +165,15 @@ class WindowButton: NSView {
             ])
         }
 
-        // Badge (fills rest of fused)
         let badge = NSView()
         badge.wantsLayer = true
-        badge.layer?.backgroundColor = badgeBackground(windowInfo.state).cgColor
+        badge.layer?.backgroundColor = windowInfo.state.badgeBackground.cgColor
         badge.translatesAutoresizingMaskIntoConstraints = false
         fused.addSubview(badge)
 
         let numLabel = NSTextField(labelWithString: windowInfo.displayLabel)
         numLabel.font = Theme.monoFont(ofSize: 15, weight: .bold)
-        numLabel.textColor = badgeTextColor(windowInfo.state)
+        numLabel.textColor = windowInfo.state.badgeTextColor
         numLabel.alignment = .center
         numLabel.isBezeled = false
         numLabel.drawsBackground = false
@@ -181,7 +182,6 @@ class WindowButton: NSView {
         numLabel.translatesAutoresizingMaskIntoConstraints = false
         badge.addSubview(numLabel)
 
-        // Alert pulse
         if windowInfo.state == .alert {
             let anim = CABasicAnimation(keyPath: "opacity")
             anim.fromValue = 1.0
@@ -192,170 +192,41 @@ class WindowButton: NSView {
             badge.layer?.add(anim, forKey: "alertPulse")
         }
 
-        // Tab count label
         let tabCount = windowInfo.tabs.count
-        let countText = tabCount == 1 ? "1 tab" : "\(tabCount) tabs"
-        let countLabel = NSTextField(labelWithString: countText)
-        countLabel.font = Theme.font(ofSize: 8)
-        countLabel.textColor = Theme.textDim
-        countLabel.alignment = .center
-        countLabel.isBezeled = false
-        countLabel.drawsBackground = false
-        countLabel.isEditable = false
-        countLabel.isSelectable = false
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(countLabel)
+        let tabCountLabel = NSTextField(labelWithString: tabCount == 1 ? "1 tab" : "\(tabCount) tabs")
+        tabCountLabel.font = Theme.font(ofSize: 8)
+        tabCountLabel.textColor = Theme.textDim
+        tabCountLabel.alignment = .center
+        tabCountLabel.isBezeled = false
+        tabCountLabel.drawsBackground = false
+        tabCountLabel.isEditable = false
+        tabCountLabel.isSelectable = false
+        tabCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tabCountLabel)
 
         NSLayoutConstraint.activate([
-            // Fused: centered horizontally, pinned to top
             fused.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             fused.centerXAnchor.constraint(equalTo: centerXAnchor),
-            fused.widthAnchor.constraint(equalToConstant: 44),
-            fused.heightAnchor.constraint(equalToConstant: 40),
+            fused.widthAnchor.constraint(equalToConstant: Layout.badgeSize),
+            fused.heightAnchor.constraint(equalToConstant: Layout.badgeHeight),
 
-            // Bar: left 4px
             bar.leadingAnchor.constraint(equalTo: fused.leadingAnchor),
             bar.topAnchor.constraint(equalTo: fused.topAnchor),
             bar.bottomAnchor.constraint(equalTo: fused.bottomAnchor),
             bar.widthAnchor.constraint(equalToConstant: 4),
 
-            // Badge: fills right of bar
             badge.leadingAnchor.constraint(equalTo: bar.trailingAnchor),
             badge.trailingAnchor.constraint(equalTo: fused.trailingAnchor),
             badge.topAnchor.constraint(equalTo: fused.topAnchor),
             badge.bottomAnchor.constraint(equalTo: fused.bottomAnchor),
 
-            // Number centered in badge
             numLabel.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
             numLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
 
-            // Count label: below fused
-            countLabel.topAnchor.constraint(equalTo: fused.bottomAnchor, constant: 2),
-            countLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            tabCountLabel.topAnchor.constraint(equalTo: fused.bottomAnchor, constant: 2),
+            tabCountLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
 
-            // Total height
-            bottomAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 4),
-        ])
-    }
-
-    // MARK: - Collapsed Mode: Fused bar + badge + tab count
-
-    private func buildCollapsed() {
-        layer?.cornerRadius = 0; layer?.borderWidth = 0
-        layer?.borderColor = nil; layer?.backgroundColor = nil; layer?.masksToBounds = false
-
-        // Fused bar+badge: 44x40, flat-left rounded-right, overflow hidden
-        let fused = NSView()
-        fused.wantsLayer = true
-        fused.layer?.cornerRadius = 10
-        fused.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
-        fused.layer?.masksToBounds = true
-        fused.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(fused)
-
-        // Left segmented bar (4px wide)
-        let bar = NSView()
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.04).cgColor
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        fused.addSubview(bar)
-
-        let activeTabs = windowInfo.activeTabs
-        if !activeTabs.isEmpty {
-            let segStack = NSStackView()
-            segStack.orientation = .vertical
-            segStack.spacing = 1
-            segStack.distribution = .fillEqually
-            segStack.translatesAutoresizingMaskIntoConstraints = false
-            bar.addSubview(segStack)
-
-            for tab in activeTabs {
-                let seg = NSView()
-                seg.wantsLayer = true
-                seg.layer?.backgroundColor = tabSegmentColor(tab).cgColor
-                segStack.addArrangedSubview(seg)
-            }
-
-            NSLayoutConstraint.activate([
-                segStack.topAnchor.constraint(equalTo: bar.topAnchor),
-                segStack.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-                segStack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-                segStack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            ])
-        }
-
-        // Badge (fills rest of fused)
-        let badge = NSView()
-        badge.wantsLayer = true
-        badge.layer?.backgroundColor = badgeBackground(windowInfo.state).cgColor
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        fused.addSubview(badge)
-
-        let numLabel = NSTextField(labelWithString: "\(windowInfo.displayLabel)")
-        numLabel.font = Theme.monoFont(ofSize: 15, weight: .bold)
-        numLabel.textColor = badgeTextColor(windowInfo.state)
-        numLabel.alignment = .center
-        numLabel.isBezeled = false
-        numLabel.drawsBackground = false
-        numLabel.isEditable = false
-        numLabel.isSelectable = false
-        numLabel.translatesAutoresizingMaskIntoConstraints = false
-        badge.addSubview(numLabel)
-
-        // Alert pulse
-        if windowInfo.state == .alert {
-            let anim = CABasicAnimation(keyPath: "opacity")
-            anim.fromValue = 1.0
-            anim.toValue = 0.5
-            anim.duration = 1.5
-            anim.autoreverses = true
-            anim.repeatCount = .infinity
-            badge.layer?.add(anim, forKey: "alertPulse")
-        }
-
-        // Tab count label
-        let tabCount = windowInfo.tabs.count
-        let countText = tabCount == 1 ? "1 tab" : "\(tabCount) tabs"
-        let countLabel = NSTextField(labelWithString: countText)
-        countLabel.font = Theme.font(ofSize: 8)
-        countLabel.textColor = Theme.textDim
-        countLabel.alignment = .center
-        countLabel.isBezeled = false
-        countLabel.drawsBackground = false
-        countLabel.isEditable = false
-        countLabel.isSelectable = false
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(countLabel)
-
-        NSLayoutConstraint.activate([
-            // Fused: centered horizontally, pinned to top
-            fused.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            fused.centerXAnchor.constraint(equalTo: centerXAnchor),
-            fused.widthAnchor.constraint(equalToConstant: 44),
-            fused.heightAnchor.constraint(equalToConstant: 40),
-
-            // Bar: left 4px
-            bar.leadingAnchor.constraint(equalTo: fused.leadingAnchor),
-            bar.topAnchor.constraint(equalTo: fused.topAnchor),
-            bar.bottomAnchor.constraint(equalTo: fused.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 4),
-
-            // Badge: fills right of bar
-            badge.leadingAnchor.constraint(equalTo: bar.trailingAnchor),
-            badge.trailingAnchor.constraint(equalTo: fused.trailingAnchor),
-            badge.topAnchor.constraint(equalTo: fused.topAnchor),
-            badge.bottomAnchor.constraint(equalTo: fused.bottomAnchor),
-
-            // Number centered in badge
-            numLabel.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
-            numLabel.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
-
-            // Count label: below fused
-            countLabel.topAnchor.constraint(equalTo: fused.bottomAnchor, constant: 2),
-            countLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-
-            // Total height
-            bottomAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 4),
+            bottomAnchor.constraint(equalTo: tabCountLabel.bottomAnchor, constant: 2),
         ])
     }
 
@@ -364,7 +235,7 @@ class WindowButton: NSView {
     private func buildExpanded() {
         // Box styling on self
         wantsLayer = true
-        layer?.cornerRadius = 12
+        layer?.cornerRadius = Layout.boxCornerRadius
         layer?.borderWidth = 1
         layer?.borderColor = NSColor(white: 1.0, alpha: 0.07).cgColor
         layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.018).cgColor
@@ -374,7 +245,7 @@ class WindowButton: NSView {
 
         // ── Header gradient background (full-height left→right wash) ──
         let headerGradient = GradientView()
-        headerGradient.color = stateAccentColor(state)
+        headerGradient.color = state.accentColor
         headerGradient.startAlpha = state == .inactive ? 0.10 : 0.18
         headerGradient.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerGradient)
@@ -387,13 +258,13 @@ class WindowButton: NSView {
         let badge = NSView()
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 8
-        badge.layer?.backgroundColor = badgeBackground(state).cgColor
+        badge.layer?.backgroundColor = state.badgeBackground.cgColor
         badge.translatesAutoresizingMaskIntoConstraints = false
         headerContainer.addSubview(badge)
 
         let badgeNum = NSTextField(labelWithString: windowInfo.displayLabel)
         badgeNum.font = Theme.monoFont(ofSize: 11.5, weight: .semibold)
-        badgeNum.textColor = badgeTextColor(state)
+        badgeNum.textColor = state.badgeTextColor
         badgeNum.alignment = .center
         badgeNum.isBezeled = false
         badgeNum.drawsBackground = false
@@ -523,66 +394,12 @@ class WindowButton: NSView {
         ])
     }
 
-    // MARK: - Colors
-
-    private func stateAccentColor(_ state: SessionState) -> NSColor {
-        switch state {
-        case .working: return Theme.blue
-        case .alert:   return Theme.red
-        case .idle:    return Theme.green
-        case .inactive: return NSColor(hexString: "#7B8FA1")!  // steel — no session
-        }
-    }
-
-    // Synced with expanded palette (Theme.*)
-    private func tabSegmentColor(_ tab: ITermTabInfo) -> NSColor {
-        if tab.hasClaude {
-            switch tab.claudeState {
-            case .working: return Theme.blue
-            case .alert:   return Theme.red
-            case .idle:    return Theme.green
-            case .inactive: return Theme.green
-            }
-        }
-        if let proc = tab.processInfo {
-            switch proc.state {
-            case .running: return Theme.yellow
-            case .success: return Theme.green
-            case .error:   return Theme.red
-            }
-        }
-        if tab.alwaysShow {
-            return NSColor(white: 1.0, alpha: 0.25)
-        }
-        return NSColor(white: 1.0, alpha: 0.1)
-    }
-
-    private func badgeBackground(_ state: SessionState) -> NSColor {
-        switch state {
-        case .working: return Theme.blue.withAlphaComponent(0.16)
-        case .alert:   return Theme.red.withAlphaComponent(0.16)
-        case .idle:    return Theme.green.withAlphaComponent(0.14)
-        case .inactive: return NSColor(white: 1.0, alpha: 0.04)
-        }
-    }
-
-    private func badgeTextColor(_ state: SessionState) -> NSColor {
-        switch state {
-        case .working: return Theme.blue
-        case .alert:   return Theme.red
-        case .idle:    return Theme.green
-        case .inactive: return NSColor(white: 1.0, alpha: 0.45)
-        }
-    }
+    // Colors now use SessionState extensions: .accentColor, .badgeBackground, .badgeTextColor
+    // Tab segment colors use TerminalTab.segmentColor extension
 
     // MARK: - Mouse
 
-    override func draw(_ dirtyRect: NSRect) {
-        if isHovered && !isExpanded {
-            Theme.hover.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8).fill()
-        }
-    }
+    override func draw(_ dirtyRect: NSRect) { }
 
     override func updateTrackingAreas() {
         if let ta = trackingArea { removeTrackingArea(ta) }
@@ -591,8 +408,19 @@ class WindowButton: NSView {
         addTrackingArea(ta)
     }
 
-    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true; needsDisplay = true
+    }
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        // Force full redraw to clear hover paint
+        setNeedsDisplay(bounds)
+        displayIfNeeded()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        dumpDebugInfo()
+    }
 
     override func mouseDown(with event: NSEvent) {
         if windowInfo.isPlaceholder {
@@ -602,6 +430,55 @@ class WindowButton: NSView {
             onFocusHighPriorityTab?()
         } else {
             onToggle?()
+        }
+    }
+
+    private func dumpDebugInfo(event: String = "manual") {
+        var lines: [String] = []
+        lines.append("=== WindowButton Debug [\(event)] ===")
+        lines.append("windowName=\(windowInfo.windowName) label=\(windowInfo.displayLabel)")
+        lines.append("isExpanded=\(isExpanded) isMinimalMode=\(isMinimalMode) isHovered=\(isHovered)")
+        lines.append("state=\(windowInfo.state) tabs=\(windowInfo.tabs.count)")
+        lines.append("")
+        lines.append("Self layer:")
+        dumpLayer(of: self, indent: "  ", into: &lines)
+        lines.append("")
+        lines.append("View hierarchy:")
+        dumpViewTree(self, indent: "", into: &lines)
+
+        let output = lines.joined(separator: "\n") + "\n"
+        let path = "/tmp/claude-sidebar/windowbutton-debug.log"
+        if let data = output.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path) {
+                if let fh = FileHandle(forWritingAtPath: path) {
+                    fh.seekToEndOfFile()
+                    fh.write(data)
+                    fh.closeFile()
+                }
+            } else {
+                FileManager.default.createFile(atPath: path, contents: data)
+            }
+        }
+        NSLog("[WindowButton] Debug written to %@", path)
+    }
+
+    private func dumpLayer(of view: NSView, indent: String, into lines: inout [String]) {
+        guard let l = view.layer else { lines.append("\(indent)(no layer)"); return }
+        let bg = l.backgroundColor.map { NSColor(cgColor: $0)?.hexString ?? "?" } ?? "nil"
+        let border = l.borderColor.map { NSColor(cgColor: $0)?.hexString ?? "?" } ?? "nil"
+        let shadow = l.shadowOpacity > 0 ? "opacity=\(l.shadowOpacity) color=\(l.shadowColor.map { NSColor(cgColor: $0)?.hexString ?? "?" } ?? "nil") radius=\(l.shadowRadius)" : "none"
+        lines.append("\(indent)bg=\(bg) border=\(border) bw=\(l.borderWidth) cr=\(l.cornerRadius) opacity=\(l.opacity) shadow=\(shadow) masksToBounds=\(l.masksToBounds)")
+    }
+
+    private func dumpViewTree(_ view: NSView, indent: String, into lines: inout [String]) {
+        let cls = String(describing: type(of: view))
+        let frame = "(\(Int(view.frame.origin.x)),\(Int(view.frame.origin.y)) \(Int(view.frame.width))x\(Int(view.frame.height)))"
+        var desc = "\(indent)\(cls) \(frame)"
+        if let tf = view as? NSTextField { desc += " text=\"\(tf.stringValue)\" color=\(tf.textColor?.hexString ?? "?")"}
+        lines.append(desc)
+        dumpLayer(of: view, indent: indent + "  ", into: &lines)
+        for sub in view.subviews {
+            dumpViewTree(sub, indent: indent + "  ", into: &lines)
         }
     }
 }

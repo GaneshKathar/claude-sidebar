@@ -17,7 +17,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
     private var minimalViewCheckbox: NSButton!
     private var autoStartClaudeCheckbox: NSButton!
     private var openCommandField: NSTextField!
-    private var showAllITermWindowsCheckbox: NSButton!
+    private var showAllTerminalWindowsCheckbox: NSButton!
     private var tableView: NSTableView!
     private var hookStatusLabel: NSTextField!
     private var installHooksButton: NSButton!
@@ -287,10 +287,10 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
 
         // Show all iTerm windows
         yOffset -= 28
-        showAllITermWindowsCheckbox = NSButton(checkboxWithTitle: "Show all iTerm windows (track running processes)", target: nil, action: nil)
-        showAllITermWindowsCheckbox.state = (appConfig.showAllITermWindows ?? false) ? .on : .off
-        showAllITermWindowsCheckbox.frame = NSRect(x: 20, y: yOffset, width: 400, height: 20)
-        contentView.addSubview(showAllITermWindowsCheckbox)
+        showAllTerminalWindowsCheckbox = NSButton(checkboxWithTitle: "Show all terminal windows (track running processes)", target: nil, action: nil)
+        showAllTerminalWindowsCheckbox.state = (appConfig.showAllTerminalWindows ?? false) ? .on : .off
+        showAllTerminalWindowsCheckbox.frame = NSRect(x: 20, y: yOffset, width: 400, height: 20)
+        contentView.addSubview(showAllTerminalWindowsCheckbox)
 
         // === Section C: Status Colors ===
         yOffset -= 40
@@ -628,7 +628,7 @@ class SettingsWindowController: NSObject, NSTableViewDelegate, NSTableViewDataSo
             minimalView: minimalViewCheckbox.state == .on,
             autoStartClaude: autoStartClaudeCheckbox.state == .on,
             openCommand: openCommandField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? nil : openCommandField.stringValue.trimmingCharacters(in: .whitespaces),
-            showAllITermWindows: showAllITermWindowsCheckbox.state == .on,
+            showAllTerminalWindows: showAllTerminalWindowsCheckbox.state == .on,
             colorIdle:    colorWells.count > 0 ? colorWells[0].color.hexString : nil,
             colorWorking: colorWells.count > 1 ? colorWells[1].color.hexString : nil,
             colorAlert:   colorWells.count > 2 ? colorWells[2].color.hexString : nil,

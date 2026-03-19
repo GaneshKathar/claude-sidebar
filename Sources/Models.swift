@@ -34,11 +34,69 @@ struct AppConfig: Codable {
     var minimalView: Bool? = false
     var autoStartClaude: Bool? = false
     var openCommand: String?
-    var showAllITermWindows: Bool? = false
+    var showAllTerminalWindows: Bool? = false
+    var colorActive: String?
     var colorIdle: String?
     var colorWorking: String?
     var colorAlert: String?
     var colorRunning: String?
+
+    // Memberwise init (needed because custom init(from:) suppresses synthesized one)
+    init(repos: [RepoConfig], pollInterval: Double? = 30.0, branchCacheTTL: Double? = nil,
+         staleTimeout: Double? = nil, launchAtLogin: Bool? = nil, fontScale: Double? = 1.0,
+         minimalView: Bool? = false, autoStartClaude: Bool? = false, openCommand: String? = nil,
+         showAllTerminalWindows: Bool? = false, colorActive: String? = nil, colorIdle: String? = nil,
+         colorWorking: String? = nil, colorAlert: String? = nil, colorRunning: String? = nil) {
+        self.repos = repos
+        self.pollInterval = pollInterval
+        self.branchCacheTTL = branchCacheTTL
+        self.staleTimeout = staleTimeout
+        self.launchAtLogin = launchAtLogin
+        self.fontScale = fontScale
+        self.minimalView = minimalView
+        self.autoStartClaude = autoStartClaude
+        self.openCommand = openCommand
+        self.showAllTerminalWindows = showAllTerminalWindows
+        self.colorActive = colorActive
+        self.colorIdle = colorIdle
+        self.colorWorking = colorWorking
+        self.colorAlert = colorAlert
+        self.colorRunning = colorRunning
+    }
+
+    // Backward compat: accept old "showAllITermWindows" key in JSON
+    enum CodingKeys: String, CodingKey {
+        case repos, pollInterval, branchCacheTTL, staleTimeout, launchAtLogin
+        case fontScale, minimalView, autoStartClaude, openCommand
+        case showAllTerminalWindows, colorActive, colorIdle, colorWorking, colorAlert, colorRunning
+    }
+    private enum LegacyKeys: String, CodingKey {
+        case showAllITermWindows
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        repos = try c.decode([RepoConfig].self, forKey: .repos)
+        pollInterval = try c.decodeIfPresent(Double.self, forKey: .pollInterval)
+        branchCacheTTL = try c.decodeIfPresent(Double.self, forKey: .branchCacheTTL)
+        staleTimeout = try c.decodeIfPresent(Double.self, forKey: .staleTimeout)
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
+        fontScale = try c.decodeIfPresent(Double.self, forKey: .fontScale)
+        minimalView = try c.decodeIfPresent(Bool.self, forKey: .minimalView)
+        autoStartClaude = try c.decodeIfPresent(Bool.self, forKey: .autoStartClaude)
+        openCommand = try c.decodeIfPresent(String.self, forKey: .openCommand)
+        colorActive = try c.decodeIfPresent(String.self, forKey: .colorActive)
+        colorIdle = try c.decodeIfPresent(String.self, forKey: .colorIdle)
+        colorWorking = try c.decodeIfPresent(String.self, forKey: .colorWorking)
+        colorAlert = try c.decodeIfPresent(String.self, forKey: .colorAlert)
+        colorRunning = try c.decodeIfPresent(String.self, forKey: .colorRunning)
+        // New key takes priority; fall back to legacy key
+        showAllTerminalWindows = try c.decodeIfPresent(Bool.self, forKey: .showAllTerminalWindows)
+        if showAllTerminalWindows == nil {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            showAllTerminalWindows = try legacy.decodeIfPresent(Bool.self, forKey: .showAllITermWindows)
+        }
+    }
 
     // Resolve install dir from the app bundle's location
     // e.g. /Users/foo/rubrik/claude-sidebar/ClaudeSidebar.app -> /Users/foo/rubrik/claude-sidebar
@@ -157,7 +215,25 @@ struct TerminalFocus: Codable {
     let iterm_session_id: String?   // iTerm2 session UUID (extracted from ITERM_SESSION_ID)
     let cmux_workspace_id: String?  // CMUX_WORKSPACE_ID
     let cmux_socket_path: String?   // CMUX_SOCKET_PATH
+    let cmux_surface_id: String?    // CMUX_SURFACE_ID
+    let kitty_window_id: String?    // KITTY_WINDOW_ID
+    let kitty_listen_on: String?    // KITTY_LISTEN_ON
     let timestamp: Double
+    let extra: [String: String]?    // Additional terminal-specific env vars
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tty = try c.decode(String.self, forKey: .tty)
+        term_program = try c.decodeIfPresent(String.self, forKey: .term_program)
+        iterm_session_id = try c.decodeIfPresent(String.self, forKey: .iterm_session_id)
+        cmux_workspace_id = try c.decodeIfPresent(String.self, forKey: .cmux_workspace_id)
+        cmux_socket_path = try c.decodeIfPresent(String.self, forKey: .cmux_socket_path)
+        cmux_surface_id = try c.decodeIfPresent(String.self, forKey: .cmux_surface_id)
+        kitty_window_id = try c.decodeIfPresent(String.self, forKey: .kitty_window_id)
+        kitty_listen_on = try c.decodeIfPresent(String.self, forKey: .kitty_listen_on)
+        timestamp = try c.decode(Double.self, forKey: .timestamp)
+        extra = try c.decodeIfPresent([String: String].self, forKey: .extra)
+    }
 }
 
 struct HookStates {
@@ -171,17 +247,19 @@ struct HookStates {
 
 enum SessionState: Int, Comparable {
     case inactive = 0
-    case idle = 1
-    case working = 2
-    case alert = 3
+    case active = 1      // Claude session started, not yet processing
+    case idle = 2        // Claude done, waiting for input
+    case working = 3     // Claude processing / tool use
+    case alert = 4       // Needs permission / error
     static func < (lhs: SessionState, rhs: SessionState) -> Bool { lhs.rawValue < rhs.rawValue }
 
     var color: NSColor {
         switch self {
         case .inactive: return NSColor(white: 1.0, alpha: 0.1)
-        case .idle: return Theme.green
-        case .working: return Theme.blue
-        case .alert: return Theme.red
+        case .active: return Theme.active
+        case .idle: return Theme.idle
+        case .working: return Theme.working
+        case .alert: return Theme.alert
         }
     }
 
@@ -189,9 +267,66 @@ enum SessionState: Int, Comparable {
         switch s {
         case "alert": return .alert
         case "working": return .working
+        case "active": return .active
         case "idle": return .idle
         default: return .inactive
         }
+    }
+}
+
+// MARK: - SessionState Color Extensions
+
+extension SessionState {
+    var accentColor: NSColor {
+        switch self {
+        case .working: return Theme.working
+        case .alert:   return Theme.alert
+        case .active:  return Theme.active
+        case .idle:    return Theme.idle
+        case .inactive: return NSColor(hexString: "#7B8FA1")!
+        }
+    }
+
+    var badgeBackground: NSColor {
+        switch self {
+        case .working: return Theme.working.withAlphaComponent(0.16)
+        case .alert:   return Theme.alert.withAlphaComponent(0.16)
+        case .active:  return Theme.active.withAlphaComponent(0.12)
+        case .idle:    return Theme.idle.withAlphaComponent(0.14)
+        case .inactive: return NSColor(white: 1.0, alpha: 0.04)
+        }
+    }
+
+    var badgeTextColor: NSColor {
+        switch self {
+        case .working: return Theme.working
+        case .alert:   return Theme.alert
+        case .active:  return Theme.active
+        case .idle:    return Theme.idle
+        case .inactive: return NSColor(white: 1.0, alpha: 0.45)
+        }
+    }
+}
+
+extension TerminalTab {
+    /// Color for collapsed/minimal bar segments
+    var segmentColor: NSColor {
+        if hasClaude {
+            switch claudeState {
+            case .working: return Theme.working
+            case .alert:   return Theme.alert
+            case .active:  return Theme.active
+            case .idle, .inactive: return Theme.idle
+            }
+        }
+        if let proc = processInfo {
+            switch proc.state {
+            case .running: return Theme.running
+            case .success: return Theme.idle
+            case .error:   return Theme.alert
+            }
+        }
+        return Theme.active
     }
 }
 
@@ -204,9 +339,9 @@ enum ProcessState {
 
     var color: NSColor {
         switch self {
-        case .running: return Theme.yellow
-        case .success: return Theme.green
-        case .error: return Theme.red
+        case .running: return Theme.running
+        case .success: return Theme.idle
+        case .error: return Theme.alert
         }
     }
 }
@@ -240,9 +375,19 @@ struct ProcessInfo {
     }
 }
 
+// MARK: - Process Scan Result (top-level for protocol compatibility)
+
+struct ProcessScanResult {
+    var processes: [String: ProcessInfo] = [:]  // tty -> non-shell/non-claude process
+    var claudeTTYs: Set<String> = []            // TTYs running claude
+    var claudePIDs: [String: Int32] = [:]       // tty -> claude PID (for kqueue watching)
+    var shellPIDs: [String: Int32] = [:]        // tty -> shell PID (for CWD detection)
+}
+typealias ProcessMonitorScanResult = ProcessScanResult
+
 // MARK: - Window-Centric Models
 
-struct ITermTabInfo {
+struct TerminalTab {
     var tabIndex: Int
     var sessionId: String
     var name: String
@@ -254,9 +399,11 @@ struct ITermTabInfo {
     var claudeState: SessionState
     var processInfo: ProcessInfo?
     var appName: String?   // terminal app display name, set at scan time
-    var alwaysShow: Bool = false  // true for iTerm tabs when showAllITermWindows is on
+    var alwaysShow: Bool = false  // true when showAllTerminalWindows is on
+    var terminalType: String? = nil  // "iterm2", "ghostty", "kitty", etc.
 
-    // Overall tab state: Claude state takes priority, then process state
+    // Overall tab state: Claude state takes priority, then process state.
+    // .inactive is repo-level only (placeholder) — tabs are always at least .active.
     var state: SessionState {
         if hasClaude && claudeState != .inactive {
             return claudeState
@@ -268,9 +415,8 @@ struct ITermTabInfo {
             case .success: return .idle
             }
         }
-        if hasClaude { return .idle }
-        if alwaysShow { return .idle }
-        return .inactive
+        if hasClaude { return .active }
+        return .active  // non-Claude idle → slate, distinct from Claude idle (teal)
     }
 
     // Whether this tab has any interesting activity (Claude or process)
@@ -278,15 +424,17 @@ struct ITermTabInfo {
         hasClaude || processInfo != nil || alwaysShow
     }
 }
+typealias ITermTabInfo = TerminalTab
 
-struct ITermWindowInfo {
+struct TerminalWindow {
     var windowId: Int
     var windowName: String
     var displayLabel: String  // "1","2" for repo windows, "5","6" for others
     var displayPath: String? = nil  // short path shown below name in expanded box
-    var tabs: [ITermTabInfo]
+    var tabs: [TerminalTab]
     var matchedRepoNum: Int?     // set during scan, nil for non-repo windows
     var isPlaceholder: Bool = false  // true for repos with no active window
+    var terminalType: String? = nil  // "iterm2", "ghostty", "kitty", etc.
 
     // Highest state across tabs
     var state: SessionState {
@@ -299,13 +447,13 @@ struct ITermWindowInfo {
     }
 
     // Tabs with activity (for collapsed bar segments)
-    var activeTabs: [ITermTabInfo] {
+    var activeTabs: [TerminalTab] {
         tabs.filter { $0.hasActivity }
     }
 
-    // Create a placeholder for a configured repo with no active iTerm window
-    static func placeholder(for repo: RepoConfig) -> ITermWindowInfo {
-        ITermWindowInfo(
+    // Create a placeholder for a configured repo with no active terminal window
+    static func placeholder(for repo: RepoConfig) -> TerminalWindow {
+        TerminalWindow(
             windowId: -repo.num,   // negative to avoid collision with real windows
             windowName: repo.title ?? (repo.expandedPath as NSString).lastPathComponent,
             displayLabel: repo.displayLabel,
@@ -316,3 +464,4 @@ struct ITermWindowInfo {
         )
     }
 }
+typealias ITermWindowInfo = TerminalWindow

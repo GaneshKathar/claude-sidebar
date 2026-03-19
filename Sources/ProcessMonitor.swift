@@ -5,11 +5,11 @@ private let logger = OSLog(subsystem: "com.claudesidebar", category: "ProcessMon
 
 // MARK: - Process Monitor (kqueue-based)
 
-class ProcessMonitor {
+class ProcessMonitor: ProcessMonitoring {
     private var kq: Int32 = -1
     private var watchedPIDs: [Int32: (tty: String, callback: (Int32) -> Void)] = [:]
     private let pidLock = NSLock()  // Thread-safe access to watchedPIDs
-    private static let maxWatchedPIDs = 500
+    private static let maxWatchedPIDs = Layout.maxWatchedPIDs
     private var monitorThread: Thread?
     private var running = false
 
@@ -101,13 +101,8 @@ class ProcessMonitor {
         }
     }
 
-    // Result of a batched ps scan
-    struct ScanResult {
-        var processes: [String: ProcessInfo] = [:]  // tty -> non-shell/non-claude process
-        var claudeTTYs: Set<String> = []            // TTYs running claude
-        var claudePIDs: [String: Int32] = [:]       // tty -> claude PID (for kqueue watching)
-        var shellPIDs: [String: Int32] = [:]        // tty -> shell PID (for CWD detection)
-    }
+    // Result type is top-level ProcessScanResult (for protocol compatibility)
+    typealias ScanResult = ProcessScanResult
 
     // Ignore these — they're not user-initiated long-running commands
     private static let ignoredProcesses: Set<String> = [
@@ -124,6 +119,8 @@ class ProcessMonitor {
         "gitstatusd-darwin-arm64", "gitstatusd",
         // IDE/tool infrastructure (Claude subprocesses)
         "sourcekit-lsp", "uv",
+        // Multiplexer infrastructure
+        "cmux",
     ]
 
     // Candidate foreground process (collected before resolving root command)
@@ -159,7 +156,7 @@ class ProcessMonitor {
         guard let output = String(data: data, encoding: .utf8) else { return ScanResult() }
 
         // Build set of short TTY names (e.g. "ttys001" from "/dev/ttys001")
-        // ps output shows "ttys001", iTerm reports "/dev/ttys001"
+        // ps output shows "ttys001", terminals report "/dev/ttys001"
         var ttyShortMap: [String: String] = [:]
         for tty in ttys {
             let short = tty.replacingOccurrences(of: "/dev/", with: "")

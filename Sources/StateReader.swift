@@ -3,7 +3,7 @@ import os.log
 
 private let logger = OSLog(subsystem: "com.claudesidebar", category: "StateReader")
 
-class StateReader {
+class StateReader: StateReading {
     private let stateDir = "/tmp/claude-sidebar"
 
     // Read terminal focus files written by the hook at SessionStart.

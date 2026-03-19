@@ -72,7 +72,8 @@ fi
 
 # Map event → state
 case "$EVENT" in
-    SessionStart|UserPromptSubmit) STATE="working" ;;
+    SessionStart)                  STATE="active" ;;
+    UserPromptSubmit)              STATE="working" ;;
     Stop)                          STATE="idle" ;;
     Notification|PermissionRequest) STATE="alert" ;;
     PostToolUse)
@@ -90,22 +91,31 @@ case "$EVENT" in
     *)                             exit 0 ;;
 esac
 
-# On SessionStart, write focus file — terminal identity data for window focusing.
-# This file persists after claude exits so the sidebar can always focus the right window.
-if [ "$EVENT" = "SessionStart" ] && [ -n "$TTY" ]; then
+# Write focus file — terminal identity data for window focusing.
+# Written at SessionStart, and re-created on any event if missing (e.g. after /tmp cleanup).
+FOCUS_FILE=""
+if [ -n "$TTY" ] && [ -n "$SAFE_TTY" ]; then
+    FOCUS_FILE="$STATE_DIR/focus${SAFE_TTY}.json"
+fi
+if [ -n "$TTY" ] && { [ "$EVENT" = "SessionStart" ] || { [ -n "$FOCUS_FILE" ] && [ ! -f "$FOCUS_FILE" ]; }; }; then
     # Extract iTerm2 session UUID from ITERM_SESSION_ID (format: "wNtNpUUID")
     ITERM_UUID=""
     if [ -n "$ITERM_SESSION_ID" ]; then
         ITERM_UUID="${ITERM_SESSION_ID##*p}"
     fi
-    FOCUS_FILE="$STATE_DIR/focus${SAFE_TTY}.json"
+    # Capture Kitty IPC env vars (set by kitty when allow_remote_control is enabled)
+    KITTY_WID="${KITTY_WINDOW_ID:-}"
+    KITTY_SOCK="${KITTY_LISTEN_ON:-}"
     TMP_FOCUS=$(mktemp)
-    printf '{"tty":"%s","term_program":"%s","iterm_session_id":"%s","cmux_workspace_id":"%s","cmux_socket_path":"%s","timestamp":%d}' \
+    printf '{"tty":"%s","term_program":"%s","iterm_session_id":"%s","cmux_workspace_id":"%s","cmux_socket_path":"%s","cmux_surface_id":"%s","kitty_window_id":"%s","kitty_listen_on":"%s","timestamp":%d}' \
         "$(json_escape "$TTY")" \
         "$(json_escape "${TERM_PROGRAM:-}")" \
         "$(json_escape "$ITERM_UUID")" \
         "$(json_escape "${CMUX_WORKSPACE_ID:-}")" \
         "$(json_escape "${CMUX_SOCKET_PATH:-}")" \
+        "$(json_escape "${CMUX_SURFACE_ID:-}")" \
+        "$(json_escape "$KITTY_WID")" \
+        "$(json_escape "$KITTY_SOCK")" \
         "$(date +%s)" > "$TMP_FOCUS" && mv -f "$TMP_FOCUS" "$FOCUS_FILE"
 fi
 

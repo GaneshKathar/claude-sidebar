@@ -9,7 +9,7 @@ class TabCard: NSView {
     private var trackingArea: NSTrackingArea?
     private var isHovered = false
 
-    init(tab: ITermTabInfo, appName: String? = nil, isLastTab: Bool = true) {
+    init(tab: TerminalTab, appName: String? = nil, isLastTab: Bool = true) {
         super.init(frame: .zero)
         wantsLayer = true
         // Transparent by default — box background shows through; hover adds subtle tint
@@ -23,7 +23,8 @@ class TabCard: NSView {
         let dot8 = NSView()
         dot8.wantsLayer = true
         dot8.layer?.cornerRadius = 4
-        dot8.layer?.backgroundColor = tab.state.color.cgColor
+        let dotColor = (!tab.hasClaude && tab.processInfo == nil) ? Theme.active : tab.state.color
+        dot8.layer?.backgroundColor = dotColor.cgColor
         dot8.translatesAutoresizingMaskIntoConstraints = false
         row1.addSubview(dot8)
 
@@ -146,7 +147,6 @@ class TabCard: NSView {
 
         // Row 2 (branch) — indent 16px from leading, 4px below row1
         var lastBottomAnchor: NSLayoutYAxisAnchor = row1.bottomAnchor
-        var lastBottomConstant: CGFloat = 4
 
         if let r2 = row2 {
             NSLayoutConstraint.activate([
@@ -155,7 +155,6 @@ class TabCard: NSView {
                 r2.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             ])
             lastBottomAnchor = r2.bottomAnchor
-            lastBottomConstant = 0
         }
 
         // Status line: 4px top, 12px sides, isLastTab ? 12px : 8px bottom, 28px left indent
@@ -175,7 +174,7 @@ class TabCard: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    private func makeClaudeStatusRow(tab: ITermTabInfo) -> NSView {
+    private func makeClaudeStatusRow(tab: TerminalTab) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 4
@@ -190,7 +189,7 @@ class TabCard: NSView {
         dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
         if tab.claudeState == .working {
-            dot.layer?.shadowColor = Theme.blue.cgColor
+            dot.layer?.shadowColor = Theme.working.cgColor
             dot.layer?.shadowRadius = 3
             dot.layer?.shadowOpacity = 0.5
             dot.layer?.shadowOffset = .zero
@@ -206,13 +205,16 @@ class TabCard: NSView {
         switch tab.claudeState {
         case .working:
             label.stringValue = "Claude working"
-            label.textColor = Theme.blue
+            label.textColor = Theme.working
         case .alert:
             label.stringValue = "Needs permission"
-            label.textColor = Theme.red
+            label.textColor = Theme.alert
+        case .active:
+            label.stringValue = "Claude active"
+            label.textColor = Theme.active
         case .idle:
             label.stringValue = "Claude idle"
-            label.textColor = Theme.green
+            label.textColor = Theme.idle
         case .inactive:
             label.stringValue = "Claude"
             label.textColor = Theme.textDim
@@ -232,14 +234,14 @@ class TabCard: NSView {
         let dot = NSView()
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 2
-        dot.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.25).cgColor
+        dot.layer?.backgroundColor = Theme.active.cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
         dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
         dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
         let label = NSTextField(labelWithString: "Idle")
         label.font = Theme.font(ofSize: 9, weight: .medium)
-        label.textColor = NSColor(white: 1.0, alpha: 0.3)
+        label.textColor = Theme.active
         label.isBezeled = false; label.drawsBackground = false
         label.isEditable = false; label.isSelectable = false
 
@@ -259,8 +261,8 @@ class TabCard: NSView {
             let dot = NSView()
             dot.wantsLayer = true
             dot.layer?.cornerRadius = 2
-            dot.layer?.backgroundColor = Theme.yellow.cgColor
-            dot.layer?.shadowColor = Theme.yellow.cgColor
+            dot.layer?.backgroundColor = Theme.running.cgColor
+            dot.layer?.shadowColor = Theme.running.cgColor
             dot.layer?.shadowRadius = 3
             dot.layer?.shadowOpacity = 0.4
             dot.layer?.shadowOffset = .zero
@@ -270,7 +272,7 @@ class TabCard: NSView {
 
             let label = NSTextField(labelWithString: "Running")
             label.font = Theme.font(ofSize: 9, weight: .medium)
-            label.textColor = Theme.yellow
+            label.textColor = Theme.running
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
@@ -298,14 +300,14 @@ class TabCard: NSView {
             let dot = NSView()
             dot.wantsLayer = true
             dot.layer?.cornerRadius = 2
-            dot.layer?.backgroundColor = Theme.green.cgColor
+            dot.layer?.backgroundColor = Theme.idle.cgColor
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
             dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
 
             let label = NSTextField(labelWithString: "Completed")
             label.font = Theme.font(ofSize: 9, weight: .medium)
-            label.textColor = Theme.green
+            label.textColor = Theme.idle
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
@@ -331,7 +333,7 @@ class TabCard: NSView {
             let dot = NSView()
             dot.wantsLayer = true
             dot.layer?.cornerRadius = 2
-            dot.layer?.backgroundColor = Theme.red.cgColor
+            dot.layer?.backgroundColor = Theme.alert.cgColor
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.widthAnchor.constraint(equalToConstant: 4).isActive = true
             dot.heightAnchor.constraint(equalToConstant: 4).isActive = true
@@ -339,7 +341,7 @@ class TabCard: NSView {
             let exitLabel = "Failed (exit \(proc.exitCode ?? 1))"
             let label = NSTextField(labelWithString: exitLabel)
             label.font = Theme.font(ofSize: 9, weight: .medium)
-            label.textColor = Theme.red
+            label.textColor = Theme.alert
             label.isBezeled = false; label.drawsBackground = false
             label.isEditable = false; label.isSelectable = false
 
