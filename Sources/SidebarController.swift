@@ -80,10 +80,9 @@ class SidebarController: PollingDelegate, DockingDelegate {
 
         // --- Scroll view (frame-based, resized manually) ---
         scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.scrollerStyle = .overlay
         scrollView.drawsBackground = false
-        scrollView.autohidesScrollers = true
         contentView.addSubview(scrollView)
 
         docView = FlippedView()
